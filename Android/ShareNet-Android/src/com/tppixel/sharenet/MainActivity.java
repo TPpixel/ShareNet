@@ -46,7 +46,7 @@ import java.util.Locale;
  */
 public class MainActivity extends Activity {
     private static final int REQ_VPN_PREPARE = 7001;
-    private static final String GITHUB_URL = "https://github.com/TPpixel";
+    private static final String GITHUB_URL = "https://github.com/TPpixel/ShareNet";
 
     private final Handler handler = new Handler(Looper.getMainLooper());
 
@@ -369,7 +369,7 @@ public class MainActivity extends Activity {
         githubRow.addView(githubIcon);
 
         TextView githubLink = new TextView(this);
-        githubLink.setText("GitHub: github.com/TPpixel");
+        githubLink.setText("GitHub: github.com/TPpixel/ShareNet");
         githubLink.setTextColor(ExpressiveUi.PRIMARY);
         githubLink.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f);
         githubLink.setLayoutParams(new LinearLayout.LayoutParams(

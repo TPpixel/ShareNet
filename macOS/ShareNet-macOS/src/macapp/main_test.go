@@ -97,7 +97,7 @@ func TestBuildSingBoxConfig(t *testing.T) {
 }
 
 func TestEmbeddedUIAndAPI(t *testing.T) {
-	if !strings.Contains(string(uiHTML), "ShareNet") || !strings.Contains(string(uiHTML), "github.com/TPpixel") {
+	if !strings.Contains(string(uiHTML), "ShareNet") || !strings.Contains(string(uiHTML), "github.com/TPpixel/ShareNet") {
 		t.Fatal("uiHTML missing expected branding/links")
 	}
 	b := NewBackend("")

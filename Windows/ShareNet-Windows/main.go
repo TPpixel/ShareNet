@@ -232,7 +232,7 @@ func (a *ShareApp) snapshot() AppState {
 		StartProxy:     a.startProxy,
 		ProxyPort:      ProxyPort,
 		UsbSocksPort:   UsbSocksPort,
-		GitHubURL:      "https://github.com/TPpixel",
+		GitHubURL:      "https://github.com/TPpixel/ShareNet",
 		Logs:           logsCopy,
 	}
 	vpnMgr := a.vpn

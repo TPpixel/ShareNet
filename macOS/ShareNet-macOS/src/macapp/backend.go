@@ -25,7 +25,7 @@ const (
 	tunTokenPath        = "/tmp/hotspot-vpn-tun.token"
 	dnsBackupPath       = "/tmp/hotspot-vpn-dns-backup.json"
 	singBoxPgrepPattern = "[s]ing-box run -c " + cfgPath
-	githubURL           = "https://github.com/TPpixel"
+	githubURL           = "https://github.com/TPpixel/ShareNet"
 	maxLogRows          = 160
 )
 

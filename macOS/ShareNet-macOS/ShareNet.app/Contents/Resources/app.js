@@ -13,7 +13,7 @@ function run(argv) {
         : (appParent + "/ShareNet.app/Contents/Resources");
 
     var proxyPort = 8080;
-    var githubURL = "https://github.com/TPpixel";
+    var githubURL = "https://github.com/TPpixel/ShareNet";
     var ca = Application.currentApplication();
     ca.includeStandardAdditions = true;
 
@@ -220,7 +220,7 @@ function run(argv) {
 
     // Developer Footer Card
     var devCard = makeGlassCard($.NSMakeRect(20, 18, 560, 50), 3, 16);
-    var devBtn = $.NSButton.buttonWithTitleTargetAction("Разработчик · TPpixel   —   Открыть github.com/TPpixel   ›", null, "");
+    var devBtn = $.NSButton.buttonWithTitleTargetAction("Разработчик · TPpixel   —   github.com/TPpixel/ShareNet   ›", null, "");
     devBtn.setFrame($.NSMakeRect(12, 8, 536, 34));
     devBtn.setBordered(false);
     devBtn.setFont($.NSFont.systemFontOfSizeWeight(12.5, 0.3));

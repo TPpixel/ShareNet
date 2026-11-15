@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 private let proxyPort = 8080
-private let githubURL = "https://github.com/TPpixel"
+private let githubURL = "https://github.com/TPpixel/ShareNet"
 private let singBoxConfigPath = "/tmp/hotspot-vpn-singbox.json"
 private let singBoxLogPath = "/tmp/hotspot-vpn-singbox.log"
 private let singBoxPidPath = "/tmp/hotspot-vpn-singbox.pid"
@@ -864,7 +864,7 @@ struct HotspotContentView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Разработчик · TPpixel")
                         .font(.system(size: 13, weight: .semibold))
-                    Text("Открыть профиль GitHub (github.com/TPpixel)")
+                    Text("Открыть репозиторий GitHub (github.com/TPpixel/ShareNet)")
                         .font(.system(size: 11.5))
                         .foregroundStyle(.secondary)
                 }
