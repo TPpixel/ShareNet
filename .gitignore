@@ -1,0 +1,21 @@
+# Compiled packages & runtime binaries (distributed via Releases)
+*.exe
+*.apk
+*.zip
+*.syso
+*.keystore
+
+# Build outputs
+Android/ShareNet-Android/build/
+Windows/ShareNet-Windows/dist/
+
+# Heavy macOS binaries (kept outside Git history; see Releases / README)
+macOS/ShareNet-macOS/sing-box
+macOS/ShareNet-macOS/ShareNet.app/Contents/MacOS/ShareNet
+macOS/ShareNet-macOS/ShareNet.app/Contents/MacOS/ShareNet-native
+macOS/ShareNet-macOS/ShareNet.app/Contents/Resources/sing-box
+
+# OS metadata & temporary files
+.DS_Store
+Thumbs.db
+*.tmp

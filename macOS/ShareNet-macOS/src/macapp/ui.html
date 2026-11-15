@@ -1,0 +1,921 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ShareNet</title>
+<style>
+  :root {
+    --bg: #1e1e1e;
+    --header-bg: #252525;
+    --group-bg: rgba(255, 255, 255, 0.05);
+    --row-hover: rgba(255, 255, 255, 0.04);
+    --separator: rgba(255, 255, 255, 0.085);
+    --border: rgba(255, 255, 255, 0.10);
+    --input-bg: rgba(0, 0, 0, 0.28);
+    --seg-bg: rgba(255, 255, 255, 0.08);
+    --seg-thumb: rgba(255, 255, 255, 0.16);
+    --btn-sec: rgba(255, 255, 255, 0.10);
+    --btn-sec-hover: rgba(255, 255, 255, 0.15);
+    --log-bg: #141414;
+    --text: rgba(255, 255, 255, 0.92);
+    --muted: rgba(255, 255, 255, 0.52);
+    --accent: #0a84ff;
+    --accent-hover: #2190ff;
+    --accent-fg: #ffffff;
+    --danger: #ff453a;
+    --danger-hover: #ff5b52;
+    --ok: #30d158;
+    --warn: #ff9f0a;
+    --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", sans-serif;
+    --font-mono: "SF Mono", ui-monospace, Menlo, monospace;
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root:not(.theme-dark) {
+      --bg: #f5f5f7;
+      --header-bg: #ededef;
+      --group-bg: #ffffff;
+      --row-hover: rgba(0, 0, 0, 0.03);
+      --separator: rgba(0, 0, 0, 0.08);
+      --border: rgba(0, 0, 0, 0.09);
+      --input-bg: #ffffff;
+      --seg-bg: rgba(0, 0, 0, 0.06);
+      --seg-thumb: #ffffff;
+      --btn-sec: rgba(0, 0, 0, 0.06);
+      --btn-sec-hover: rgba(0, 0, 0, 0.10);
+      --log-bg: #ffffff;
+      --text: #1d1d1f;
+      --muted: rgba(0, 0, 0, 0.50);
+      --danger: #ff3b30;
+      --danger-hover: #e5352b;
+      --ok: #28cd41;
+      --warn: #ff9500;
+    }
+  }
+
+  :root.theme-light {
+    --bg: #f5f5f7;
+    --header-bg: #ededef;
+    --group-bg: #ffffff;
+    --row-hover: rgba(0, 0, 0, 0.03);
+    --separator: rgba(0, 0, 0, 0.08);
+    --border: rgba(0, 0, 0, 0.09);
+    --input-bg: #ffffff;
+    --seg-bg: rgba(0, 0, 0, 0.06);
+    --seg-thumb: #ffffff;
+    --btn-sec: rgba(0, 0, 0, 0.06);
+    --btn-sec-hover: rgba(0, 0, 0, 0.10);
+    --log-bg: #ffffff;
+    --text: #1d1d1f;
+    --muted: rgba(0, 0, 0, 0.50);
+    --danger: #ff3b30;
+    --danger-hover: #e5352b;
+    --ok: #28cd41;
+    --warn: #ff9500;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.38;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  .app {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+  }
+
+  /* Native macOS segmented toolbar */
+  .toolbar {
+    flex: none;
+    padding: 8px 14px;
+    background: var(--header-bg);
+    border-bottom: 1px solid var(--separator);
+    display: flex;
+    justify-content: center;
+  }
+
+  .segmented {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    width: 100%;
+    max-width: 276px;
+    padding: 2px;
+    border-radius: 7px;
+    background: var(--seg-bg);
+  }
+
+  .seg-btn {
+    height: 23px;
+    border: none;
+    border-radius: 5.5px;
+    background: transparent;
+    color: var(--muted);
+    font: 500 12px var(--font-sans);
+    cursor: default;
+    transition: background-color 120ms ease, color 120ms ease;
+  }
+
+  .seg-btn.active {
+    background: var(--seg-thumb);
+    color: var(--text);
+    font-weight: 600;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  }
+
+  .content {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 12px 15px 14px;
+  }
+
+  .page {
+    display: none;
+    flex-direction: column;
+    gap: 11px;
+    height: 100%;
+  }
+  .page.active { display: flex; }
+
+  /* Hero gateway status block with Windscribe-style odometer digits */
+  .hero {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 4px 0 2px;
+    gap: 4px;
+  }
+
+  .addr-btn {
+    border: none;
+    background: transparent;
+    color: var(--text);
+    font-family: var(--font-display);
+    font-size: 26px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+    padding: 2px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1.15;
+  }
+  .addr-btn:hover { background: var(--row-hover); }
+  .addr-btn.idle { color: var(--muted); }
+
+  .odo-digit {
+    display: inline-block;
+    height: 1.15em;
+    overflow: hidden;
+    vertical-align: top;
+  }
+  .odo-reel {
+    display: flex;
+    flex-direction: column;
+    transition: transform 440ms cubic-bezier(0.22, 1, 0.36, 1);
+    will-change: transform;
+  }
+  .odo-glyph {
+    display: block;
+    height: 1.15em;
+    line-height: 1.15em;
+    text-align: center;
+  }
+  .odo-sep {
+    display: inline-block;
+    height: 1.15em;
+    line-height: 1.15em;
+    vertical-align: top;
+  }
+
+  .status-line {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--muted);
+    flex: none;
+  }
+  .status-line.ok { color: var(--text); }
+  .status-line.ok .status-dot { background: var(--ok); }
+  .status-line.warn { color: var(--warn); }
+  .status-line.warn .status-dot { background: var(--warn); }
+
+  /* macOS System Settings inset-grouped container */
+  .section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 4px 5px;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--muted);
+  }
+
+  .group {
+    background: var(--group-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-height: 36px;
+    padding: 6px 12px;
+  }
+  .row + .row {
+    border-top: 1px solid var(--separator);
+  }
+
+  .row-btn {
+    width: 100%;
+    border: none;
+    background: transparent;
+    color: var(--text);
+    font-family: var(--font-sans);
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 100ms ease;
+  }
+  .row-btn:hover:not(:disabled) { background: var(--row-hover); }
+  .row-btn:disabled { opacity: 0.48; cursor: not-allowed; }
+
+  .row-label {
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--text);
+  }
+  .gh-row-left {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .gh-icon {
+    flex-shrink: 0;
+    color: var(--text);
+    opacity: 0.9;
+  }
+  .row-sub {
+    display: block;
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 1px;
+  }
+  .row-value {
+    font-size: 13px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+  .row-value.strong { color: var(--text); font-weight: 500; }
+
+  .radio-dot {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 1.5px solid var(--muted);
+    flex: none;
+    display: grid;
+    place-items: center;
+  }
+  .row-btn.selected .radio-dot {
+    border-color: var(--accent);
+    background: var(--accent);
+  }
+  .row-btn.selected .radio-dot::after {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent-fg);
+  }
+
+  .gw-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1 1 auto;
+    justify-content: flex-end;
+    min-width: 0;
+  }
+  .mac-input {
+    width: 155px;
+    height: 26px;
+    padding: 0 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--input-bg);
+    color: var(--text);
+    font: 500 12px var(--font-mono);
+    text-align: right;
+    user-select: text;
+  }
+  .mac-btn-sm {
+    height: 26px;
+    padding: 0 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--btn-sec);
+    color: var(--text);
+    font: 500 12px var(--font-sans);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .mac-btn-sm:hover { background: var(--btn-sec-hover); }
+
+  .text-link-btn {
+    border: none;
+    background: transparent;
+    color: var(--accent);
+    font: 500 11.5px var(--font-sans);
+    cursor: pointer;
+    padding: 0;
+  }
+  .text-link-btn:hover { text-decoration: underline; }
+
+  .spacer { flex: 1 1 auto; min-height: 4px; }
+
+  /* Standard Apple primary / destructive push button using system accent color */
+  .primary-btn {
+    width: 100%;
+    height: 36px;
+    border: none;
+    border-radius: 8px;
+    background: var(--accent);
+    color: var(--accent-fg);
+    font: 600 13.5px var(--font-sans);
+    cursor: pointer;
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    transition: background-color 120ms ease, opacity 120ms ease;
+  }
+  .primary-btn:hover:not(:disabled) { background: var(--accent-hover); }
+  .primary-btn.active,
+  .primary-btn.danger { background: var(--danger); color: #ffffff; }
+  .primary-btn.active:hover:not(:disabled),
+  .primary-btn.danger:hover:not(:disabled) { background: var(--danger-hover); }
+  .primary-btn:disabled { opacity: 0.72; cursor: default; }
+
+  /* Native Apple NSProgressIndicator 8-blade radial spinner */
+  .apple-spinner {
+    display: none;
+    width: 14px;
+    height: 14px;
+    flex: none;
+  }
+  .primary-btn.loading .apple-spinner { display: inline-block; }
+  @keyframes apple-spin-fade {
+    0% { opacity: 1; }
+    100% { opacity: 0.2; }
+  }
+  .apple-spinner rect {
+    fill: currentColor;
+    animation: apple-spin-fade 0.8s linear infinite;
+  }
+  .apple-spinner rect:nth-child(1) { animation-delay: -0.7s; }
+  .apple-spinner rect:nth-child(2) { animation-delay: -0.6s; }
+  .apple-spinner rect:nth-child(3) { animation-delay: -0.5s; }
+  .apple-spinner rect:nth-child(4) { animation-delay: -0.4s; }
+  .apple-spinner rect:nth-child(5) { animation-delay: -0.3s; }
+  .apple-spinner rect:nth-child(6) { animation-delay: -0.2s; }
+  .apple-spinner rect:nth-child(7) { animation-delay: -0.1s; }
+  .apple-spinner rect:nth-child(8) { animation-delay: 0s; }
+
+  .footnote {
+    padding: 0 4px;
+    font-size: 11.5px;
+    color: var(--muted);
+    line-height: 1.42;
+  }
+
+  .chevron {
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1;
+  }
+
+  .log-box {
+    background: var(--log-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    flex: 1 1 auto;
+    min-height: 125px;
+    max-height: 175px;
+    overflow-y: auto;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.48;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+    user-select: text;
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="toolbar">
+    <div class="segmented" role="tablist" aria-label="Разделы ShareNet">
+      <button id="tabBtn0" class="seg-btn active" type="button" role="tab" aria-selected="true">Приём</button>
+      <button id="tabBtn1" class="seg-btn" type="button" role="tab" aria-selected="false">Сеть</button>
+      <button id="tabBtn2" class="seg-btn" type="button" role="tab" aria-selected="false">Утилиты</button>
+    </div>
+  </header>
+
+  <main class="content">
+    <!-- TAB 0: ПРИЁМ -->
+    <section id="pageVpn" class="page active">
+      <div class="hero">
+        <button id="vpnOdoBtn" class="addr-btn idle" type="button" title="Нажмите, чтобы скопировать адрес">0.0.0.0:8080</button>
+        <div id="vpnStatusBadge" class="status-line">
+          <span class="status-dot"></span>
+          <span id="vpnStatusText">Поиск шлюза...</span>
+        </div>
+      </div>
+
+      <div>
+        <div class="section-head"><span>ШЛЮЗ ТЕЛЕФОНА</span></div>
+        <div class="group">
+          <div class="row">
+            <span class="row-label">Интерфейс</span>
+            <span id="vpnAdapterInfo" class="row-value strong">Wi-Fi · :8080</span>
+          </div>
+          <div class="row">
+            <span class="row-label">IP-адрес</span>
+            <div class="gw-controls">
+              <input id="gwInput" class="mac-input" type="text" placeholder="Авто" aria-label="IP шлюза телефона">
+              <button id="autoGwBtn" class="mac-btn-sm" type="button">Авто</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="section-head"><span>РЕЖИМ РАБОТЫ</span></div>
+        <div class="group" role="radiogroup" aria-label="Режим подключения">
+          <button id="modeTunBtn" class="row row-btn selected" type="button" role="radio" aria-checked="true">
+            <span>
+              <span class="row-label">Полный VPN (TUN)</span>
+              <span class="row-sub">Весь трафик Mac и DoH 1.1.1.1 (запросит пароль)</span>
+            </span>
+            <span class="radio-dot" aria-hidden="true"></span>
+          </button>
+          <button id="modeProxyBtn" class="row row-btn" type="button" role="radio" aria-checked="false">
+            <span>
+              <span class="row-label">Системный прокси</span>
+              <span class="row-sub">SOCKS5 / HTTP для браузеров без пароля</span>
+            </span>
+            <span class="radio-dot" aria-hidden="true"></span>
+          </button>
+        </div>
+      </div>
+
+      <div class="spacer"></div>
+
+      <button id="vpnHeroBtn" class="primary-btn" type="button">
+        <svg class="apple-spinner" viewBox="0 0 16 16" aria-hidden="true">
+          <rect x="7.15" y="1" width="1.7" height="4.2" rx="0.85"/>
+          <rect x="7.15" y="1" width="1.7" height="4.2" rx="0.85" transform="rotate(45 8 8)"/>
+          <rect x="7.15" y="1" width="1.7" height="4.2" rx="0.85" transform="rotate(90 8 8)"/>
+          <rect x="7.15" y="1" width="1.7" height="4.2" rx="0.85" transform="rotate(135 8 8)"/>
+          <rect x="7.15" y="1" width="1.7" height="4.2" rx="0.85" transform="rotate(180 8 8)"/>
+          <rect x="7.15" y="1" width="1.7" height="4.2" rx="0.85" transform="rotate(225 8 8)"/>
+          <rect x="7.15" y="1" width="1.7" height="4.2" rx="0.85" transform="rotate(270 8 8)"/>
+          <rect x="7.15" y="1" width="1.7" height="4.2" rx="0.85" transform="rotate(315 8 8)"/>
+        </svg>
+        <span id="vpnHeroLabel">Подключить</span>
+      </button>
+    </section>
+
+    <!-- TAB 1: СЕТЬ -->
+    <section id="pageTools" class="page">
+      <div>
+        <div class="section-head"><span>ПОДКЛЮЧЕНИЕ</span></div>
+        <div class="group">
+          <div class="row">
+            <span class="row-label">Интерфейс macOS</span>
+            <span id="toolsIface" class="row-value strong">—</span>
+          </div>
+          <div class="row">
+            <span class="row-label">Шлюз телефона</span>
+            <span id="toolsGw" class="row-value strong">—</span>
+          </div>
+          <div class="row">
+            <span class="row-label">Прокси-порт</span>
+            <span class="row-value">8080 (SOCKS5 / HTTP)</span>
+          </div>
+          <div class="row">
+            <span class="row-label">Ядро VPN</span>
+            <span id="toolsCore" class="row-value">—</span>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="section-head"><span>ДЕЙСТВИЯ</span></div>
+        <div class="group">
+          <button id="vpnCheckBtn" class="row row-btn" type="button">
+            <span class="row-label">Проверить интернет (HTTPS 204)</span>
+            <span class="chevron">›</span>
+          </button>
+          <button id="copyAddrBtn" class="row row-btn" type="button">
+            <span class="row-label">Скопировать IP:8080</span>
+            <span class="chevron">›</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="footnote">
+        Включите точку доступа и ShareNet на телефоне, затем подключите Mac к его Wi-Fi — шлюз определится автоматически.
+      </div>
+    </section>
+
+    <!-- TAB 2: УТИЛИТЫ -->
+    <section id="pageReset" class="page">
+      <div>
+        <div class="section-head"><span>СОСТОЯНИЕ</span></div>
+        <div class="group">
+          <div class="row">
+            <span class="row-label">Полный VPN (TUN)</span>
+            <span id="resetTunState" class="row-value">Отключён</span>
+          </div>
+          <div class="row">
+            <span class="row-label">Системный прокси</span>
+            <span id="resetProxyState" class="row-value">Отключён</span>
+          </div>
+          <div id="resetDnsRow" class="row" style="display:none;">
+            <span class="row-label">DNS macOS</span>
+            <span class="row-value" style="color:var(--warn);">Завис 172.19.0.2</span>
+          </div>
+          <button id="githubBtn" class="row row-btn" type="button">
+            <span class="row-label gh-row-left">
+              <svg class="gh-icon" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">
+                <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>
+              </svg>
+              <span>github.com/TPpixel</span>
+            </span>
+            <span class="chevron">↗</span>
+          </button>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;flex:1 1 auto;min-height:0;">
+        <div class="section-head">
+          <span>ЖУРНАЛ</span>
+          <span style="display:inline-flex;gap:12px;align-items:center;">
+            <button id="copyLogBtn" class="text-link-btn" type="button">Копировать</button>
+            <button id="clearLogBtn" class="text-link-btn" type="button">Очистить</button>
+          </span>
+        </div>
+        <div id="logBox" class="log-box">Загрузка...</div>
+      </div>
+
+      <button id="resetAllBtn" class="primary-btn danger" type="button">
+        <svg class="apple-spinner" viewBox="0 0 16 16" aria-hidden="true">
+          <rect x="7.15" y="1" width="1.7" height="4.2" rx="0.85"/>
+          <rect x="7.15" y="1" width="1.7" height="4.2" rx="0.85" transform="rotate(45 8 8)"/>
+          <rect x="7.15" y="1" width="1.7" height="4.2" rx="0.85" transform="rotate(90 8 8)"/>
+          <rect x="7.15" y="1" width="1.7" height="4.2" rx="0.85" transform="rotate(135 8 8)"/>
+          <rect x="7.15" y="1" width="1.7" height="4.2" rx="0.85" transform="rotate(180 8 8)"/>
+          <rect x="7.15" y="1" width="1.7" height="4.2" rx="0.85" transform="rotate(225 8 8)"/>
+          <rect x="7.15" y="1" width="1.7" height="4.2" rx="0.85" transform="rotate(270 8 8)"/>
+          <rect x="7.15" y="1" width="1.7" height="4.2" rx="0.85" transform="rotate(315 8 8)"/>
+        </svg>
+        <span>Отключить всё и сбросить DNS</span>
+      </button>
+    </section>
+  </main>
+</div>
+
+<script>
+(function () {
+  var tabPages = [
+    document.getElementById("pageVpn"),
+    document.getElementById("pageTools"),
+    document.getElementById("pageReset")
+  ];
+  var tabBtns = [
+    document.getElementById("tabBtn0"),
+    document.getElementById("tabBtn1"),
+    document.getElementById("tabBtn2")
+  ];
+
+  var SESSION_TOKEN = "__SESSION_TOKEN__";
+
+  var state = {
+    mode: "tun",
+    hasSingBox: true,
+    connected: false,
+    connectedMode: "",
+    gateway: "",
+    manualGw: false,
+    service: "Wi-Fi",
+    reachable: false,
+    dnsStuck: false,
+    busy: false,
+    clearedAt: 0
+  };
+
+  var el = {
+    vpnOdoBtn: document.getElementById("vpnOdoBtn"),
+    vpnStatusBadge: document.getElementById("vpnStatusBadge"),
+    vpnStatusText: document.getElementById("vpnStatusText"),
+    vpnAdapterInfo: document.getElementById("vpnAdapterInfo"),
+    gwInput: document.getElementById("gwInput"),
+    autoGwBtn: document.getElementById("autoGwBtn"),
+    vpnHeroBtn: document.getElementById("vpnHeroBtn"),
+    vpnHeroLabel: document.getElementById("vpnHeroLabel"),
+    modeTunBtn: document.getElementById("modeTunBtn"),
+    modeProxyBtn: document.getElementById("modeProxyBtn"),
+    toolsIface: document.getElementById("toolsIface"),
+    toolsGw: document.getElementById("toolsGw"),
+    toolsCore: document.getElementById("toolsCore"),
+    vpnCheckBtn: document.getElementById("vpnCheckBtn"),
+    copyAddrBtn: document.getElementById("copyAddrBtn"),
+    resetTunState: document.getElementById("resetTunState"),
+    resetProxyState: document.getElementById("resetProxyState"),
+    resetDnsRow: document.getElementById("resetDnsRow"),
+    githubBtn: document.getElementById("githubBtn"),
+    copyLogBtn: document.getElementById("copyLogBtn"),
+    clearLogBtn: document.getElementById("clearLogBtn"),
+    logBox: document.getElementById("logBox"),
+    resetAllBtn: document.getElementById("resetAllBtn")
+  };
+
+  function setTab(idx) {
+    for (var i = 0; i < 3; i++) {
+      var active = i === idx;
+      tabPages[i].classList.toggle("active", active);
+      tabBtns[i].classList.toggle("active", active);
+      tabBtns[i].setAttribute("aria-selected", active ? "true" : "false");
+    }
+  }
+  tabBtns.forEach(function (b, idx) { b.addEventListener("click", function () { setTab(idx); }); });
+
+  function api(path, body) {
+    var hdrs = { "X-Session-Token": SESSION_TOKEN };
+    if (body !== undefined) hdrs["Content-Type"] = "application/json";
+    return fetch(path, {
+      method: body !== undefined ? "POST" : "GET",
+      headers: hdrs,
+      body: body !== undefined ? JSON.stringify(body) : undefined
+    }).then(function (r) { return r.json(); });
+  }
+
+  var lastOdoAddr = "";
+  var odoReels = [];
+
+  function setOdometerAddr(addr) {
+    if (addr === lastOdoAddr) return;
+    var prevStructure = lastOdoAddr.replace(/\d/g, "#");
+    var nextStructure = addr.replace(/\d/g, "#");
+    lastOdoAddr = addr;
+    el.vpnOdoBtn.setAttribute("aria-label", addr);
+
+    if (prevStructure === nextStructure && odoReels.length > 0) {
+      var rIdx = 0;
+      for (var i = 0; i < addr.length; i++) {
+        var ch = addr[i];
+        if (ch >= "0" && ch <= "9") {
+          var reel = odoReels[rIdx];
+          if (reel) {
+            reel.style.transitionDelay = (rIdx * 18) + "ms";
+            reel.style.transform = "translateY(-" + (Number(ch) * 1.15) + "em)";
+          }
+          rIdx++;
+        }
+      }
+      return;
+    }
+
+    el.vpnOdoBtn.textContent = "";
+    odoReels = [];
+    var targets = [];
+    for (var j = 0; j < addr.length; j++) {
+      var c = addr[j];
+      if (c >= "0" && c <= "9") {
+        var win = document.createElement("span");
+        win.className = "odo-digit";
+        var strip = document.createElement("span");
+        strip.className = "odo-reel";
+        for (var d = 0; d <= 9; d++) {
+          var g = document.createElement("span");
+          g.className = "odo-glyph";
+          g.textContent = String(d);
+          strip.appendChild(g);
+        }
+        strip.style.transform = "translateY(0em)";
+        win.appendChild(strip);
+        el.vpnOdoBtn.appendChild(win);
+        odoReels.push(strip);
+        targets.push(Number(c));
+      } else {
+        var sep = document.createElement("span");
+        sep.className = "odo-sep";
+        sep.textContent = c;
+        el.vpnOdoBtn.appendChild(sep);
+      }
+    }
+
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        for (var k = 0; k < odoReels.length; k++) {
+          odoReels[k].style.transitionDelay = (k * 20) + "ms";
+          odoReels[k].style.transform = "translateY(-" + (targets[k] * 1.15) + "em)";
+        }
+      });
+    });
+  }
+
+  function render(data) {
+    if (!data) return;
+    state.hasSingBox = !!data.hasSingBox;
+    state.connected = !!data.connected;
+    state.connectedMode = data.connectedMode || "";
+    state.gateway = data.gateway || "";
+    state.service = data.service || "Wi-Fi";
+    state.reachable = !!data.reachable;
+    state.dnsStuck = !!data.dnsStuck;
+    if (!state.hasSingBox && state.mode === "tun") state.mode = "proxy";
+
+    setOdometerAddr(state.gateway ? (state.gateway + ":8080") : "0.0.0.0:8080");
+    el.vpnOdoBtn.classList.toggle("idle", !state.connected && !state.reachable);
+    el.vpnAdapterInfo.textContent = state.service + " · :8080";
+
+    if (!el.gwInput.matches(":focus") && !state.manualGw) {
+      el.gwInput.value = state.gateway || "";
+    }
+
+    el.modeTunBtn.disabled = state.connected || !state.hasSingBox;
+    el.modeProxyBtn.disabled = state.connected;
+    el.modeTunBtn.classList.toggle("selected", state.mode === "tun");
+    el.modeProxyBtn.classList.toggle("selected", state.mode === "proxy");
+    el.modeTunBtn.setAttribute("aria-checked", state.mode === "tun" ? "true" : "false");
+    el.modeProxyBtn.setAttribute("aria-checked", state.mode === "proxy" ? "true" : "false");
+
+    if (state.connected) {
+      el.vpnStatusBadge.className = "status-line ok";
+      el.vpnStatusText.textContent = state.connectedMode === "tun" ? "VPN-туннель активен" : "Системный прокси активен";
+      el.vpnHeroBtn.classList.add("active");
+      el.vpnHeroLabel.textContent = state.busy ? "Отключаю..." : "Отключить";
+    } else if (state.dnsStuck) {
+      el.vpnStatusBadge.className = "status-line warn";
+      el.vpnStatusText.textContent = "Залип DNS 172.19.0.2 — нужен сброс";
+      el.vpnHeroBtn.classList.remove("active");
+      el.vpnHeroLabel.textContent = state.busy ? "Подключаю..." : "Подключить";
+    } else if (state.reachable) {
+      el.vpnStatusBadge.className = "status-line ok";
+      el.vpnStatusText.textContent = "Телефон найден (:8080)";
+      el.vpnHeroBtn.classList.remove("active");
+      el.vpnHeroLabel.textContent = state.busy ? "Подключаю..." : "Подключить";
+    } else {
+      el.vpnStatusBadge.className = "status-line warn";
+      el.vpnStatusText.textContent = state.gateway ? "Порт 8080 не отвечает" : "Подключитесь к Wi-Fi телефона";
+      el.vpnHeroBtn.classList.remove("active");
+      el.vpnHeroLabel.textContent = state.busy ? "Подключаю..." : "Подключить";
+    }
+    el.vpnHeroBtn.disabled = state.busy;
+    el.vpnHeroBtn.classList.toggle("loading", state.busy);
+    el.resetAllBtn.disabled = state.busy;
+    el.resetAllBtn.classList.toggle("loading", state.busy);
+
+    el.toolsIface.textContent = state.service;
+    el.toolsGw.textContent = state.gateway || "не найден";
+    el.toolsCore.textContent = state.hasSingBox ? "sing-box + networksetup" : "networksetup";
+
+    el.resetTunState.textContent = state.connectedMode === "tun" ? "Активен" : "Отключён";
+    el.resetTunState.style.color = state.connectedMode === "tun" ? "var(--ok)" : "";
+    el.resetProxyState.textContent = state.connectedMode === "proxy" ? "Активен" : "Отключён";
+    el.resetProxyState.style.color = state.connectedMode === "proxy" ? "var(--ok)" : "";
+    el.resetDnsRow.style.display = state.dnsStuck ? "flex" : "none";
+
+    if (Array.isArray(data.logs)) {
+      var visible = data.logs.slice(state.clearedAt);
+      var atEnd = el.logBox.scrollHeight - el.logBox.clientHeight <= el.logBox.scrollTop + 24;
+      el.logBox.textContent = visible.join("\n") || "Журнал пуст.";
+      if (atEnd) el.logBox.scrollTop = el.logBox.scrollHeight;
+    }
+  }
+
+  function syncTheme() {
+    api("/api/theme").then(function (t) {
+      if (!t || typeof t.dark !== "boolean") return;
+      var root = document.documentElement;
+      root.classList.toggle("theme-dark", t.dark);
+      root.classList.toggle("theme-light", !t.dark);
+      if (t.accent) root.style.setProperty("--accent", t.accent);
+      if (t.accentHover) root.style.setProperty("--accent-hover", t.accentHover);
+      if (t.accentFg) root.style.setProperty("--accent-fg", t.accentFg);
+    }).catch(function () {});
+  }
+
+  function refresh() {
+    var manual = (state.manualGw || state.connected) ? el.gwInput.value.trim() : "";
+    syncTheme();
+    return api("/api/status?gw=" + encodeURIComponent(manual)).then(render).catch(function () {});
+  }
+
+  el.modeTunBtn.addEventListener("click", function () {
+    if (state.connected || !state.hasSingBox) return;
+    state.mode = "tun";
+    refresh();
+  });
+  el.modeProxyBtn.addEventListener("click", function () {
+    if (state.connected) return;
+    state.mode = "proxy";
+    refresh();
+  });
+  el.vpnHeroBtn.addEventListener("click", function () {
+    if (state.busy) return;
+    state.busy = true;
+    render({ ...state, logs: null });
+    var ep = state.connected ? "/api/disconnect" : "/api/connect";
+    api(ep, { mode: state.mode, gateway: el.gwInput.value.trim() })
+      .then(function (r) { state.busy = false; render(r); })
+      .catch(function () { state.busy = false; refresh(); });
+  });
+
+  el.vpnOdoBtn.addEventListener("click", function () {
+    api("/api/copy", { gateway: el.gwInput.value.trim() || state.gateway }).then(render);
+  });
+  el.gwInput.addEventListener("input", function () {
+    var v = el.gwInput.value.trim();
+    state.manualGw = v.length > 0 && v !== state.gateway;
+  });
+  el.autoGwBtn.addEventListener("click", function () {
+    state.manualGw = false;
+    el.gwInput.value = "";
+    refresh();
+  });
+  el.vpnCheckBtn.addEventListener("click", function () { api("/api/check", { gateway: el.gwInput.value.trim() }).then(render); });
+  el.copyAddrBtn.addEventListener("click", function () { api("/api/copy", { gateway: el.gwInput.value.trim() || state.gateway }).then(render); });
+  el.githubBtn.addEventListener("click", function () { api("/api/open-github", {}).then(render); });
+  var copyTimer = null;
+  el.copyLogBtn.addEventListener("click", function () {
+    var header = "ShareNet | " + (state.service || "Wi-Fi") + " | " + (state.gateway ? (state.gateway + ":8080") : "нет шлюза") + " | " + (state.connected ? state.connectedMode.toUpperCase() : "откл.");
+    var body = (el.logBox.textContent || "").trim();
+    var payload = header + "\n" + body;
+    api("/api/copy-logs", { text: payload }).then(function (res) {
+      if (!res || !res.ok) return;
+      el.copyLogBtn.textContent = "Скопировано";
+      if (copyTimer) clearTimeout(copyTimer);
+      copyTimer = setTimeout(function () { el.copyLogBtn.textContent = "Копировать"; }, 1600);
+    }).catch(function () {});
+  });
+  el.clearLogBtn.addEventListener("click", function () { state.clearedAt += el.logBox.textContent.split("\n").length; el.logBox.textContent = "Журнал очищен."; });
+  el.resetAllBtn.addEventListener("click", function () {
+    if (state.busy) return;
+    state.busy = true;
+    render({ ...state, logs: null });
+    api("/api/disconnect", {})
+      .then(function (r) { state.busy = false; render(r); })
+      .catch(function () { state.busy = false; refresh(); });
+  });
+
+  window.addEventListener("pagehide", function () {
+    if (navigator.sendBeacon) navigator.sendBeacon("/api/bye?token=" + encodeURIComponent(SESSION_TOKEN));
+  });
+
+  setOdometerAddr("0.0.0.0:8080");
+  refresh();
+  setInterval(refresh, 2000);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,1373 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>ShareNet</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #202020;
+    --card: #2B2B2B;
+    --card-hover: #323232;
+    --track: #2D2D2D;
+    --thumb: #3B3B3B;
+    --input-bg: #1F1F1F;
+    --border: rgba(255, 255, 255, 0.08);
+    --border-strong: rgba(255, 255, 255, 0.14);
+    --divider: rgba(255, 255, 255, 0.07);
+    --text: #FFFFFF;
+    --text-secondary: #B4B4B4;
+    --text-muted: #8E8E8E;
+    --accent: #60CDFF;
+    --on-accent: #001E2E;
+    --accent-hover: #54BBEB;
+    --accent-text: #60CDFF;
+    --accent-soft: rgba(96, 205, 255, 0.14);
+    --accent-soft-text: #8CE0FF;
+    --danger-bg: #F27E88;
+    --danger-hover: #E5707A;
+    --on-danger: #29070B;
+    --ok: #6CCB5F;
+    --warn: #FCE100;
+    --err: #FF99A4;
+    --switch-off-bg: rgba(255, 255, 255, 0.06);
+    --switch-off-border: rgba(255, 255, 255, 0.45);
+    --switch-off-knob: #CECECE;
+  }
+
+  html[data-theme="light"] {
+    --bg: #F3F3F3;
+    --card: #FFFFFF;
+    --card-hover: #F9F9F9;
+    --track: #E5E5E5;
+    --thumb: #FFFFFF;
+    --input-bg: #FFFFFF;
+    --border: rgba(0, 0, 0, 0.07);
+    --border-strong: rgba(0, 0, 0, 0.14);
+    --divider: rgba(0, 0, 0, 0.06);
+    --text: #1A1A1A;
+    --text-secondary: #5C5C5C;
+    --text-muted: #707070;
+    --accent: #0067C0;
+    --on-accent: #FFFFFF;
+    --accent-hover: #005BA8;
+    --accent-text: #005FB8;
+    --accent-soft: rgba(0, 103, 192, 0.10);
+    --accent-soft-text: #004E93;
+    --danger-bg: #C93B32;
+    --danger-hover: #B53129;
+    --on-danger: #FFFFFF;
+    --ok: #0F7B0F;
+    --warn: #9D5D00;
+    --err: #C42B1C;
+    --switch-off-bg: transparent;
+    --switch-off-border: #767676;
+    --switch-off-knob: #5C5C5C;
+  }
+
+  html.no-transitions *, html.no-transitions *::before, html.no-transitions *::after {
+    transition: none !important;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      transition: none !important;
+      animation: none !important;
+    }
+  }
+
+  * {
+    box-sizing: border-box;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  input, .log-view {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, sans-serif;
+    font-size: 13.5px;
+    line-height: 1.38;
+    overflow: hidden;
+  }
+
+  .app-shell {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    width: 100%;
+    overflow: hidden;
+  }
+
+  /* Top Bar: 3-Tab Windows 11 Segmented Switcher */
+  .topbar {
+    padding: 10px 14px 10px;
+    border-bottom: 1px solid var(--divider);
+    flex-shrink: 0;
+  }
+
+  .segmented {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    background: var(--track);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 3px;
+    gap: 2px;
+  }
+
+  .seg-tab {
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background-color 120ms ease, color 120ms ease;
+    white-space: nowrap;
+  }
+
+  .seg-tab:hover {
+    color: var(--text);
+  }
+
+  .seg-tab[aria-selected="true"] {
+    background: var(--thumb);
+    color: var(--text);
+    font-weight: 600;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14);
+  }
+
+  :is(button, input, [role="radio"], [role="switch"]):focus-visible {
+    outline: 2px solid var(--accent-text);
+    outline-offset: 2px;
+  }
+
+  /* Pages — No outer window scrolling */
+  .view {
+    display: none;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .view.active {
+    display: flex;
+  }
+
+  .page-body {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    padding: 10px 14px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  /* Hero Readout with Windscribe-style Vertical Rolling Digits */
+  .hero {
+    text-align: center;
+    padding: 2px 6px 2px;
+    flex-shrink: 0;
+  }
+
+  .hero-value {
+    font-size: 25px;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+    line-height: 1.25em;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+
+  .digit-slot {
+    display: inline-block;
+    height: 1.25em;
+    overflow: hidden;
+    position: relative;
+    width: 0.62em;
+    text-align: center;
+  }
+
+  .digit-strip {
+    display: flex;
+    flex-direction: column;
+    will-change: transform;
+    transition: transform 520ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .digit-strip.is-instant {
+    transition: none !important;
+  }
+
+  .digit-cell {
+    height: 1.25em;
+    line-height: 1.25em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .digit-sep {
+    display: inline-block;
+    height: 1.25em;
+    line-height: 1.25em;
+    padding: 0 0.02em;
+    color: var(--text-secondary);
+  }
+
+  .hero-status {
+    margin-top: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--text-muted);
+  }
+
+  .dot.ok { background: var(--ok); }
+  .dot.warn { background: var(--warn); }
+  .dot.err { background: var(--err); }
+
+  /* Section Header + Grouped Card */
+  .section {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    flex-shrink: 0;
+  }
+
+  .section.fill {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 2px;
+  }
+
+  .section-title {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  .section-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 12px;
+    min-height: 39px;
+  }
+
+  .row + .row {
+    border-top: 1px solid var(--divider);
+  }
+
+  .row-label {
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--text);
+    white-space: nowrap;
+  }
+
+  .row-sub {
+    font-size: 11.5px;
+    color: var(--text-muted);
+    margin-top: 2px;
+    line-height: 1.3;
+  }
+
+  .row-val {
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .row-inline {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+    justify-content: flex-end;
+    min-width: 0;
+  }
+
+  .input-inline {
+    width: 100%;
+    max-width: 148px;
+    height: 29px;
+    padding: 0 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border-strong);
+    background: var(--input-bg);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    transition: border-color 120ms ease;
+  }
+
+  .input-inline:focus {
+    outline: none;
+    border-color: var(--accent-text);
+  }
+
+  .btn-sm {
+    appearance: none;
+    height: 29px;
+    padding: 0 11px;
+    border-radius: 6px;
+    border: 1px solid var(--border-strong);
+    background: var(--card-hover);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: background-color 120ms ease;
+  }
+
+  .btn-sm:hover {
+    background: var(--track);
+  }
+
+  .btn-sm:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+
+  .btn-link {
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: var(--accent-text);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 5px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .btn-link:hover {
+    background: var(--accent-soft);
+  }
+
+  .util-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 7px 12px;
+    min-height: 46px;
+  }
+
+  .util-row + .util-row {
+    border-top: 1px solid var(--divider);
+  }
+
+  .util-copy {
+    min-width: 0;
+  }
+
+  .util-sub {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 1px;
+    line-height: 1.25;
+  }
+
+  .chips-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 14px 9px;
+    border-top: 1px solid var(--divider);
+  }
+
+  .chip {
+    appearance: none;
+    border: 1px solid var(--border-strong);
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    padding: 4px 9px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+
+  .chip:hover {
+    color: var(--text);
+    background: var(--card-hover);
+  }
+
+  .chip.active {
+    background: var(--accent-soft);
+    border-color: var(--accent-text);
+    color: var(--accent-soft-text);
+    font-weight: 600;
+  }
+
+  /* Fluent 2 Toggle Switch */
+  .switch-row {
+    cursor: pointer;
+  }
+
+  .switch-row:hover {
+    background: var(--card-hover);
+  }
+
+  .fluent-switch {
+    position: relative;
+    width: 40px;
+    height: 20px;
+    border-radius: 10px;
+    border: 1px solid var(--switch-off-border);
+    background: var(--switch-off-bg);
+    flex-shrink: 0;
+    transition: background-color 140ms ease, border-color 140ms ease;
+  }
+
+  .fluent-switch::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--switch-off-knob);
+    transition: transform 140ms ease, background-color 140ms ease;
+  }
+
+  .switch-row[aria-checked="true"] .fluent-switch {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+
+  .switch-row[aria-checked="true"] .fluent-switch::after {
+    transform: translateX(20px);
+    background: var(--on-accent);
+  }
+
+  /* Fluent 2 Radio Row */
+  .radio-row {
+    cursor: pointer;
+    padding: 11px 14px;
+    transition: background-color 120ms ease;
+  }
+
+  .radio-row:hover {
+    background: var(--card-hover);
+  }
+
+  .radio-copy {
+    min-width: 0;
+  }
+
+  .fluent-radio {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 1.5px solid var(--switch-off-border);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: border-color 120ms ease, background-color 120ms ease;
+  }
+
+  .fluent-radio::after {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: transparent;
+    transform: scale(0.5);
+    transition: transform 120ms ease, background-color 120ms ease;
+  }
+
+  .radio-row[aria-checked="true"] .fluent-radio {
+    border-color: var(--accent);
+    background: var(--accent);
+  }
+
+  .radio-row[aria-checked="true"] .fluent-radio::after {
+    background: var(--on-accent);
+    transform: scale(1);
+  }
+
+  /* Bottom Pinned CTA */
+  .footer-cta {
+    padding: 6px 14px 14px;
+    flex-shrink: 0;
+  }
+
+  .btn-primary {
+    appearance: none;
+    width: 100%;
+    height: 44px;
+    border: none;
+    border-radius: 8px;
+    background: var(--accent);
+    color: var(--on-accent);
+    font-family: inherit;
+    font-size: 14.5px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 120ms ease, opacity 120ms ease;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+
+  .btn-primary:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+
+  .btn-primary.is-stop {
+    background: var(--danger-bg);
+    color: var(--on-danger);
+  }
+
+  .btn-primary.is-stop:hover:not(:disabled) {
+    background: var(--danger-hover);
+  }
+
+  .btn-danger-outline {
+    appearance: none;
+    width: 100%;
+    height: 42px;
+    border-radius: 8px;
+    border: 1px solid var(--border-strong);
+    background: var(--card);
+    color: var(--err);
+    font-family: inherit;
+    font-size: 13.5px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 120ms ease;
+  }
+
+  .btn-danger-outline:hover {
+    background: var(--card-hover);
+  }
+
+  .btn-github {
+    appearance: none;
+    width: 100%;
+    height: 44px;
+    padding: 0 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border-strong);
+    background: var(--card);
+    color: var(--text);
+    font-family: inherit;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-shrink: 0;
+    cursor: pointer;
+    transition: background-color 120ms ease, border-color 120ms ease, transform 120ms ease;
+  }
+
+  .btn-github:hover {
+    background: var(--card-hover);
+  }
+
+  .btn-github:active {
+    transform: scale(0.985);
+  }
+
+  .gh-left,
+  .gh-right {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .gh-icon {
+    flex-shrink: 0;
+    color: var(--text);
+  }
+
+  .gh-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+  }
+
+  .gh-url {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .gh-arrow {
+    flex-shrink: 0;
+    color: var(--text-secondary);
+  }
+
+  /* Compact Log Viewer inside Utilities without stretching */
+  .log-card {
+    flex: 1;
+    min-height: 92px;
+    max-height: 170px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .log-view {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 9px 12px;
+    font-family: 'Cascadia Mono', 'Consolas', monospace;
+    font-size: 11.5px;
+    line-height: 1.42;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .log-view::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .log-view::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 3px;
+  }
+
+  .log-line + .log-line {
+    margin-top: 2px;
+  }
+
+  .log-time {
+    color: var(--text-muted);
+    margin-right: 6px;
+  }
+
+  .log-line.is-err { color: var(--err); }
+  .log-line.is-ok { color: var(--ok); }
+</style>
+</head>
+<body>
+<div class="app-shell">
+  <header class="topbar">
+    <nav class="segmented" role="tablist" aria-label="Разделы ShareNet">
+      <button id="tabBtn0" class="seg-tab" role="tab" aria-selected="true" aria-controls="view0" data-tab="0">Раздача</button>
+      <button id="tabBtn1" class="seg-tab" role="tab" aria-selected="false" aria-controls="view1" data-tab="1">Приём</button>
+      <button id="tabBtn2" class="seg-tab" role="tab" aria-selected="false" aria-controls="view2" data-tab="2">Утилиты</button>
+    </nav>
+  </header>
+
+  <!-- PAGE 0: USB SHARE -->
+  <section id="view0" class="view active" role="tabpanel" aria-labelledby="tabBtn0">
+    <div class="page-body">
+      <div class="hero">
+        <div id="usbHeroVal" class="hero-value" title="Нажмите, чтобы скопировать или прокрутить"></div>
+        <div class="hero-status">
+          <span id="usbHeroDot" class="dot"></span>
+          <span id="usbHeroStatus">Поиск устройства Android...</span>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-head">
+          <span class="section-title">Устройство и сеть</span>
+        </div>
+        <div class="card">
+          <div class="row">
+            <span class="row-label">Телефон</span>
+            <span id="usbDeviceName" class="row-val">Не подключён</span>
+          </div>
+          <div class="row">
+            <span class="row-label">Точка доступа</span>
+            <div class="row-inline">
+              <span id="usbHotspotVal" class="row-val">—</span>
+              <button id="openHotspotBtn" class="btn-sm" type="button">Открыть</button>
+            </div>
+          </div>
+          <div class="row">
+            <label class="row-label" for="dnsInput">DNS ПК</label>
+            <div class="row-inline">
+              <input id="dnsInput" class="input-inline" type="text" placeholder="1.1.1.1:8.8.8.8" spellcheck="false" />
+              <button id="autoDnsBtn" class="btn-sm" type="button">Авто</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-head">
+          <span class="section-title">Параметры</span>
+        </div>
+        <div class="card">
+          <div id="optAutoStart" class="row switch-row" role="switch" tabindex="0" aria-checked="true">
+            <span class="row-label">Автозапуск по USB</span>
+            <span class="fluent-switch" aria-hidden="true"></span>
+          </div>
+          <div id="optPrivDns" class="row switch-row" role="switch" tabindex="0" aria-checked="true">
+            <span class="row-label">Отключать Private DNS</span>
+            <span class="fluent-switch" aria-hidden="true"></span>
+          </div>
+          <div id="optProxy" class="row switch-row" role="switch" tabindex="0" aria-checked="true">
+            <span class="row-label">Включать SOCKS5 на телефоне</span>
+            <span class="fluent-switch" aria-hidden="true"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer-cta">
+      <button id="usbToggleBtn" class="btn-primary" type="button">Запустить раздачу</button>
+    </div>
+  </section>
+
+  <!-- PAGE 1: RECEIVE -->
+  <section id="view1" class="view" role="tabpanel" aria-labelledby="tabBtn1">
+    <div class="page-body">
+      <div class="hero">
+        <div id="vpnHeroVal" class="hero-value" title="Нажмите, чтобы скопировать или прокрутить"></div>
+        <div class="hero-status">
+          <span id="vpnHeroDot" class="dot warn"></span>
+          <span id="vpnHeroStatus">Порт 8080 не отвечает</span>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-head">
+          <span class="section-title">Шлюз телефона</span>
+          <button id="vpnCheckBtn" class="btn-link" type="button">Проверить сеть</button>
+        </div>
+        <div class="card">
+          <div class="row">
+            <span class="row-label">Интерфейс</span>
+            <span id="vpnAdapterVal" class="row-val">Поиск сети...</span>
+          </div>
+          <div class="row">
+            <label class="row-label" for="vpnGatewayInput">IP-адрес</label>
+            <div class="row-inline">
+              <input id="vpnGatewayInput" class="input-inline" type="text" placeholder="192.168.1.1" spellcheck="false" />
+              <button id="vpnAutoBtn" class="btn-sm" type="button">Авто</button>
+            </div>
+          </div>
+          <div id="vpnCandidates" class="chips-row" style="display:none"></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-head">
+          <span class="section-title">Режим работы</span>
+        </div>
+        <div class="card" role="radiogroup" aria-label="Режим приёма интернета">
+          <div id="vpnModeTun" class="row radio-row" role="radio" tabindex="0" aria-checked="true" data-mode="tun">
+            <div class="radio-copy">
+              <div class="row-label">Полный VPN (TUN)</div>
+              <div class="row-sub">Весь трафик ПК и DoH 1.1.1.1 (запросит UAC)</div>
+            </div>
+            <span class="fluent-radio" aria-hidden="true"></span>
+          </div>
+          <div id="vpnModeProxy" class="row radio-row" role="radio" tabindex="0" aria-checked="false" data-mode="proxy">
+            <div class="radio-copy">
+              <div class="row-label">Системный прокси</div>
+              <div class="row-sub">HTTP/SOCKS5 без прав администратора</div>
+            </div>
+            <span class="fluent-radio" aria-hidden="true"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer-cta">
+      <button id="vpnToggleBtn" class="btn-primary" type="button">Подключить</button>
+    </div>
+  </section>
+
+  <!-- PAGE 2: UTILITIES & LOGS -->
+  <section id="view2" class="view" role="tabpanel" aria-labelledby="tabBtn2">
+    <div class="page-body">
+      <div class="section">
+        <div class="section-head">
+          <span class="section-title">Инструменты</span>
+        </div>
+        <div class="card">
+          <div class="util-row">
+            <div class="util-copy">
+              <div class="row-label">Файл на телефон</div>
+              <div class="util-sub">Отправка в Download или установка APK</div>
+            </div>
+            <button id="sendFileBtn" class="btn-sm" type="button">Выбрать</button>
+          </div>
+          <div class="util-row">
+            <div class="util-copy">
+              <div class="row-label">APK на телефоне</div>
+              <div class="util-sub">Переустановка UsbNet и ShareNet</div>
+            </div>
+            <button id="reinstallBtn" class="btn-sm" type="button">Обновить</button>
+          </div>
+          <div class="util-row">
+            <div class="util-copy">
+              <div class="row-label">ADB в PATH</div>
+              <div class="util-sub">Команда adb в обычной консоли</div>
+            </div>
+            <button id="adbPathBtn" class="btn-sm" type="button">Добавить</button>
+          </div>
+          <div class="util-row">
+            <div class="util-copy">
+              <div class="row-label">Терминал ADB</div>
+              <div class="util-sub">Окно cmd с подключённым телефоном</div>
+            </div>
+            <button id="adbTermBtn" class="btn-sm" type="button">Открыть</button>
+          </div>
+        </div>
+      </div>
+
+      <button id="ghBtn" class="btn-github" type="button" title="Открыть github.com/TPpixel">
+        <span class="gh-left">
+          <svg class="gh-icon" viewBox="0 0 16 16" width="17" height="17" fill="currentColor" aria-hidden="true">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>
+          </svg>
+          <span class="gh-title">GitHub</span>
+        </span>
+        <span class="gh-right">
+          <span class="gh-url">github.com/TPpixel</span>
+          <svg class="gh-arrow" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M5 11L11 5M6 5h5v5"/>
+          </svg>
+        </span>
+      </button>
+
+      <div class="section fill">
+        <div class="section-head">
+          <span class="section-title">Журнал работы</span>
+          <div class="section-actions">
+            <button id="copyLogBtn" class="btn-link" type="button">Копировать</button>
+            <button id="clearLogBtn" class="btn-link" type="button">Очистить</button>
+          </div>
+        </div>
+        <div class="card log-card">
+          <div id="logView" class="log-view" aria-live="polite"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer-cta">
+      <button id="resetAllBtn" class="btn-danger-outline" type="button">Сбросить всё и откатить</button>
+    </div>
+  </section>
+</div>
+
+<script>
+(() => {
+  const SESSION_TOKEN = "__API_TOKEN__";
+  const $ = (id) => document.getElementById(id);
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let lastState = null;
+  let lastThemeKey = "";
+  let prevUsbActive = null;
+  let prevVpnActive = null;
+
+  /* Windscribe-style Vertical Slot Digit Roller */
+  function createHeroRoller(el) {
+    let currentStr = "";
+    let spinTimer = null;
+    let spinStep = 0;
+
+    function buildDOM(str, startOffset) {
+      el.innerHTML = "";
+      let digitIndex = 0;
+      for (const ch of str) {
+        if (ch >= "0" && ch <= "9") {
+          const d = Number(ch);
+          const slot = document.createElement("span");
+          slot.className = "digit-slot";
+          const strip = document.createElement("span");
+          strip.className = "digit-strip" + (reducedMotion ? " is-instant" : "");
+          // Two 0-9 cycles (20 rows) so rolling transitions forward smoothly
+          for (let n = 0; n < 20; n++) {
+            const cell = document.createElement("span");
+            cell.className = "digit-cell";
+            cell.textContent = String(n % 10);
+            strip.appendChild(cell);
+          }
+          const initialPos = startOffset ? (d + ((digitIndex % 3) + 1) * 3) % 10 : d;
+          strip.classList.add("is-instant");
+          strip.style.transform = `translateY(${-initialPos * 1.25}em)`;
+          slot.appendChild(strip);
+          el.appendChild(slot);
+          strip.dataset.target = String(d);
+          strip.dataset.idx = String(digitIndex);
+          digitIndex++;
+        } else {
+          const sep = document.createElement("span");
+          sep.className = "digit-sep";
+          sep.textContent = ch;
+          el.appendChild(sep);
+        }
+      }
+      if (startOffset && !reducedMotion) {
+        void el.offsetHeight;
+        settle(false);
+      }
+    }
+
+    function settle(forceSpin) {
+      const strips = el.querySelectorAll(".digit-strip");
+      strips.forEach((strip) => {
+        const target = Number(strip.dataset.target || 0);
+        const idx = Number(strip.dataset.idx || 0);
+        if (forceSpin && !reducedMotion) {
+          strip.classList.add("is-instant");
+          strip.style.transform = `translateY(${-target * 1.25}em)`;
+          void strip.offsetHeight;
+          strip.classList.remove("is-instant");
+          strip.style.transitionDelay = `${idx * 24}ms`;
+          strip.style.transform = `translateY(${-(10 + target) * 1.25}em)`;
+        } else {
+          strip.classList.remove("is-instant");
+          strip.style.transitionDelay = `${idx * 22}ms`;
+          strip.style.transform = `translateY(${-(10 + target) * 1.25}em)`;
+        }
+      });
+    }
+
+    function setSpinning(active) {
+      if (reducedMotion) return;
+      if (active) {
+        if (spinTimer) return;
+        spinTimer = setInterval(() => {
+          spinStep++;
+          const strips = el.querySelectorAll(".digit-strip");
+          strips.forEach((strip, idx) => {
+            strip.classList.remove("is-instant");
+            strip.style.transitionDelay = "0ms";
+            const row = (spinStep * 3 + idx * 2) % 10;
+            strip.style.transform = `translateY(${-(10 + row) * 1.25}em)`;
+          });
+        }, 120);
+      } else if (spinTimer) {
+        clearInterval(spinTimer);
+        spinTimer = null;
+        settle(true);
+      }
+    }
+
+    function update(nextStr, busy, stateToggled) {
+      if (!nextStr) return;
+      if (nextStr !== currentStr) {
+        const hadStr = currentStr !== "";
+        currentStr = nextStr;
+        buildDOM(nextStr, !reducedMotion && (!hadStr || !busy));
+      } else if (stateToggled && !busy) {
+        settle(true);
+      }
+      setSpinning(!!busy);
+    }
+
+    function replay() {
+      if (!reducedMotion && currentStr) settle(true);
+    }
+
+    return { update, replay };
+  }
+
+  const usbRoller = createHeroRoller($("usbHeroVal"));
+  const vpnRoller = createHeroRoller($("vpnHeroVal"));
+
+  async function api(path, body) {
+    const opts = {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Session-Token": SESSION_TOKEN
+      }
+    };
+    if (body !== undefined) opts.body = JSON.stringify(body);
+    try {
+      const res = await fetch(path, opts);
+      if (res.ok) {
+        const st = await res.json();
+        render(st);
+        return st;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  async function fetchState() {
+    try {
+      const res = await fetch("/api/state", {
+        headers: { "X-Session-Token": SESSION_TOKEN }
+      });
+      if (res.ok) {
+        const st = await res.json();
+        render(st);
+      }
+    } catch (_) {}
+  }
+
+  function applyTheme(st) {
+    const dark = !!st.darkTheme;
+    const t = st.theme || {};
+    const key = [dark, t.accent, t.onAccent, t.accentHover, t.accentText, t.accentSoft, t.accentSoftText].join("|");
+    if (key === lastThemeKey) return;
+    lastThemeKey = key;
+
+    document.documentElement.classList.add("no-transitions");
+    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+
+    const root = document.documentElement.style;
+    if (t.accent) {
+      root.setProperty("--accent", t.accent);
+      root.setProperty("--on-accent", t.onAccent);
+      root.setProperty("--accent-hover", t.accentHover);
+      root.setProperty("--accent-text", t.accentText);
+      root.setProperty("--accent-soft", t.accentSoft);
+      root.setProperty("--accent-soft-text", t.accentSoftText);
+    }
+
+    requestAnimationFrame(() => {
+      document.documentElement.classList.remove("no-transitions");
+    });
+  }
+
+  function selectTab(idx) {
+    [0, 1, 2].forEach((i) => {
+      const btn = $("tabBtn" + i);
+      const view = $("view" + i);
+      const sel = i === idx;
+      btn.setAttribute("aria-selected", sel ? "true" : "false");
+      view.classList.toggle("active", sel);
+    });
+    if (idx === 0) usbRoller.replay();
+    if (idx === 1) vpnRoller.replay();
+  }
+
+  function setDot(el, kind) {
+    el.classList.remove("ok", "warn", "err");
+    if (kind) el.classList.add(kind);
+  }
+
+  function render(st) {
+    if (!st) return;
+    lastState = st;
+    applyTheme(st);
+
+    // Page 0: USB Share
+    const port = st.usbSocksPort || 10808;
+    const usbChanged = prevUsbActive !== null && prevUsbActive !== !!st.isSharing;
+    prevUsbActive = !!st.isSharing;
+    usbRoller.update("127.0.0.1:" + port, !!st.isBusy, usbChanged);
+
+    const usbDot = $("usbHeroDot");
+    const usbStatus = $("usbHeroStatus");
+    if (st.isBusy) {
+      setDot(usbDot, "warn");
+      usbStatus.textContent = "Применение настроек...";
+    } else if (st.isSharing) {
+      setDot(usbDot, "ok");
+      usbStatus.textContent = st.activeSerial ? "USB-туннель активен" : "Раздача активна";
+    } else if (st.deviceState === "ready") {
+      setDot(usbDot, "ok");
+      usbStatus.textContent = "Телефон готов к раздаче";
+    } else if (st.deviceState === "unauthorized") {
+      setDot(usbDot, "warn");
+      usbStatus.textContent = "Подтвердите отладку по USB на телефоне";
+    } else {
+      setDot(usbDot, "");
+      usbStatus.textContent = "Поиск устройства Android...";
+    }
+
+    $("usbDeviceName").textContent = st.deviceName || "Не подключён";
+    const hs = st.hotspot || {};
+    $("usbHotspotVal").textContent = hs.isActive
+      ? (hs.ipAddress ? ("Вкл · " + hs.ipAddress) : "Включена")
+      : (st.deviceState === "ready" ? "Выключена" : "—");
+
+    const dnsEl = $("dnsInput");
+    if (document.activeElement !== dnsEl) {
+      dnsEl.value = st.dns || "";
+    }
+
+    $("optAutoStart").setAttribute("aria-checked", st.autoStartUsb ? "true" : "false");
+    $("optPrivDns").setAttribute("aria-checked", st.disablePrivDns ? "true" : "false");
+    $("optProxy").setAttribute("aria-checked", st.startProxy ? "true" : "false");
+
+    const usbBtn = $("usbToggleBtn");
+    usbBtn.disabled = !!st.isBusy;
+    usbBtn.classList.toggle("is-stop", !!st.isSharing);
+    usbBtn.textContent = st.isBusy ? "Подождите..." : (st.isSharing ? "Остановить раздачу" : "Запустить раздачу");
+
+    // Page 1: Receive
+    const v = st.vpn || {};
+    const gw = v.manualGateway || v.gateway || "";
+    const vPort = v.proxyPort || st.proxyPort || 8080;
+    const vpnChanged = prevVpnActive !== null && prevVpnActive !== !!v.isConnected;
+    prevVpnActive = !!v.isConnected;
+    vpnRoller.update((gw || "—") + ":" + vPort, !!v.isBusy, vpnChanged);
+
+    const vpnDot = $("vpnHeroDot");
+    const vpnStatus = $("vpnHeroStatus");
+    if (v.isBusy) {
+      setDot(vpnDot, "warn");
+      vpnStatus.textContent = "Переключение режима...";
+    } else if (v.isConnected) {
+      setDot(vpnDot, "ok");
+      const modeName = v.mode === "tun" ? "Полный VPN (TUN)" : "Системный прокси";
+      vpnStatus.textContent = v.checkStatus ? (modeName + " · " + v.checkStatus) : (modeName + " активен");
+    } else if (v.reachable) {
+      setDot(vpnDot, "ok");
+      vpnStatus.textContent = v.latencyMs > 0 ? ("Порт " + vPort + " отвечает (" + v.latencyMs + " мс)") : ("Порт " + vPort + " отвечает");
+    } else {
+      setDot(vpnDot, "warn");
+      vpnStatus.textContent = "Порт " + vPort + " не отвечает";
+    }
+
+    $("vpnAdapterVal").textContent = v.adapterName ? (v.adapterName + " · :" + vPort) : "Адаптер не найден";
+    const gwEl = $("vpnGatewayInput");
+    if (document.activeElement !== gwEl) {
+      gwEl.value = v.manualGateway || v.gateway || "";
+    }
+
+    const candBox = $("vpnCandidates");
+    const cands = Array.isArray(v.candidates) ? v.candidates : [];
+    if (cands.length > 1) {
+      candBox.style.display = "flex";
+      candBox.innerHTML = "";
+      cands.forEach((c) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "chip" + (c.ip === gw ? " active" : "");
+        b.textContent = c.ip + (c.adapterName ? " (" + c.adapterName + ")" : "");
+        b.addEventListener("click", () => api("/api/vpn-settings", { gateway: c.ip }));
+        candBox.appendChild(b);
+      });
+    } else {
+      candBox.style.display = "none";
+      candBox.innerHTML = "";
+    }
+
+    const mode = v.mode === "proxy" ? "proxy" : "tun";
+    $("vpnModeTun").setAttribute("aria-checked", mode === "tun" ? "true" : "false");
+    $("vpnModeProxy").setAttribute("aria-checked", mode === "proxy" ? "true" : "false");
+
+    const vpnBtn = $("vpnToggleBtn");
+    vpnBtn.disabled = !!v.isBusy;
+    vpnBtn.textContent = v.isBusy ? "Подождите..." : (v.isConnected ? "Отключить" : "Подключить");
+
+    // Page 2: Logs inside Utilities
+    const logView = $("logView");
+    const wasNearBottom = (logView.scrollHeight - logView.scrollTop - logView.clientHeight) < 28;
+    const logs = Array.isArray(st.logs) ? st.logs : [];
+    const frag = document.createDocumentFragment();
+    if (logs.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "log-line";
+      empty.textContent = "Журнал пуст.";
+      frag.appendChild(empty);
+    } else {
+      logs.forEach((entry) => {
+        const line = document.createElement("div");
+        const msg = entry.text || "";
+        let cls = "log-line";
+        if (/ошибк|error|fail|не найден|не отвечает/i.test(msg)) cls += " is-err";
+        else if (/готов|запущен|подключ|успешно|отвечает/i.test(msg)) cls += " is-ok";
+        line.className = cls;
+
+        const tm = document.createElement("span");
+        tm.className = "log-time";
+        tm.textContent = entry.time || "";
+        line.appendChild(tm);
+        line.appendChild(document.createTextNode(msg));
+        frag.appendChild(line);
+      });
+    }
+    logView.replaceChildren(frag);
+    if (wasNearBottom) logView.scrollTop = logView.scrollHeight;
+  }
+
+  // Tab navigation
+  [0, 1, 2].forEach((i) => {
+    const btn = $("tabBtn" + i);
+    btn.addEventListener("click", () => selectTab(i));
+    btn.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowRight") {
+        e.preventDefault();
+        const next = (i + 1) % 3;
+        selectTab(next);
+        $("tabBtn" + next).focus();
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        const prev = (i + 2) % 3;
+        selectTab(prev);
+        $("tabBtn" + prev).focus();
+      }
+    });
+  });
+
+  $("usbHeroVal").addEventListener("click", () => usbRoller.replay());
+  $("vpnHeroVal").addEventListener("click", () => vpnRoller.replay());
+
+  // Page 0 actions
+  $("dnsInput").addEventListener("change", () => api("/api/settings", { dns: $("dnsInput").value }));
+  $("autoDnsBtn").addEventListener("click", () => api("/api/auto-dns"));
+  $("openHotspotBtn").addEventListener("click", () => api("/api/open-hotspot"));
+
+  function bindSwitch(id, key) {
+    const el = $(id);
+    const toggle = () => {
+      const next = el.getAttribute("aria-checked") !== "true";
+      api("/api/settings", { [key]: next });
+    };
+    el.addEventListener("click", toggle);
+    el.addEventListener("keydown", (e) => {
+      if (e.key === " " || e.key === "Enter") {
+        e.preventDefault();
+        toggle();
+      }
+    });
+  }
+  bindSwitch("optAutoStart", "autoStartUsb");
+  bindSwitch("optPrivDns", "disablePrivDns");
+  bindSwitch("optProxy", "startProxy");
+
+  $("usbToggleBtn").addEventListener("click", () => {
+    usbRoller.replay();
+    api("/api/toggle", {
+      dns: $("dnsInput").value,
+      disablePrivDns: $("optPrivDns").getAttribute("aria-checked") === "true",
+      startProxy: $("optProxy").getAttribute("aria-checked") === "true"
+    });
+  });
+
+  // Page 1 actions
+  $("vpnGatewayInput").addEventListener("change", () => api("/api/vpn-settings", { gateway: $("vpnGatewayInput").value.trim() }));
+  $("vpnAutoBtn").addEventListener("click", () => api("/api/vpn-refresh", { gateway: "" }));
+  $("vpnCheckBtn").addEventListener("click", () => api("/api/vpn-check"));
+
+  ["vpnModeProxy", "vpnModeTun"].forEach((id) => {
+    const el = $(id);
+    const choose = () => api("/api/vpn-settings", { mode: el.dataset.mode });
+    el.addEventListener("click", choose);
+    el.addEventListener("keydown", (e) => {
+      if (e.key === " " || e.key === "Enter") {
+        e.preventDefault();
+        choose();
+      }
+    });
+  });
+
+  $("vpnToggleBtn").addEventListener("click", () => {
+    vpnRoller.replay();
+    const mode = $("vpnModeTun").getAttribute("aria-checked") === "true" ? "tun" : "proxy";
+    api("/api/vpn-toggle", {
+      gateway: $("vpnGatewayInput").value.trim(),
+      mode
+    });
+  });
+
+  // Page 2 actions (Utilities + Logs)
+  $("sendFileBtn").addEventListener("click", () => api("/api/send-file"));
+  $("reinstallBtn").addEventListener("click", () => api("/api/reinstall-apks"));
+  $("adbPathBtn").addEventListener("click", () => api("/api/install-adb"));
+  $("adbTermBtn").addEventListener("click", () => api("/api/open-terminal"));
+  $("ghBtn").addEventListener("click", () => api("/api/open-url", { url: (lastState && lastState.githubUrl) || "https://github.com/TPpixel" }));
+  $("resetAllBtn").addEventListener("click", () => api("/api/reset-all"));
+
+  $("clearLogBtn").addEventListener("click", () => api("/api/clear-logs"));
+  $("copyLogBtn").addEventListener("click", async () => {
+    const logs = (lastState && Array.isArray(lastState.logs)) ? lastState.logs : [];
+    const text = logs.map((e) => (e.time ? e.time + " " : "") + (e.text || "")).join("\n");
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (_) {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+    const btn = $("copyLogBtn");
+    const prev = btn.textContent;
+    btn.textContent = "Скопировано";
+    setTimeout(() => { btn.textContent = prev; }, 1600);
+  });
+
+  fetchState();
+  setInterval(fetchState, 1200);
+})();
+</script>
+</body>
+</html>

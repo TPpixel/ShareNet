@@ -1,0 +1,754 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ShareNet</title>
+<style>
+  :root {
+    --canvas: radial-gradient(circle at 20% 10%, rgba(28, 56, 86, 0.88) 0%, rgba(18, 24, 34, 0.94) 55%, rgba(14, 16, 22, 0.97) 100%);
+    --glass: rgba(255, 255, 255, 0.085);
+    --glass-high: rgba(255, 255, 255, 0.13);
+    --glass-nav: rgba(22, 26, 34, 0.78);
+    --glass-log: rgba(11, 13, 18, 0.78);
+    --outline: rgba(255, 255, 255, 0.16);
+    --highlight: rgba(255, 255, 255, 0.28);
+    --text: #f3f5f9;
+    --muted: rgba(232, 237, 246, 0.66);
+    --accent: #5ac8fa;
+    --accent-grad: linear-gradient(180deg, #6ad0ff 0%, #3aa8f8 100%);
+    --on-accent: #042136;
+    --accent-soft: rgba(90, 200, 250, 0.20);
+    --on-accent-soft: #bcebff;
+    --stop-grad: linear-gradient(180deg, #f0a899 0%, #e48d7c 100%);
+    --on-stop: #2d110c;
+    --ok: #6be09a;
+    --ok-bg: rgba(107, 224, 154, 0.16);
+    --warn: #f2c874;
+    --warn-bg: rgba(242, 200, 116, 0.16);
+    --focus: #7ad7ff;
+    --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
+    --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif;
+    --font-mono: "SF Mono", ui-monospace, Menlo, monospace;
+  }
+
+  html.light {
+    --canvas: radial-gradient(circle at 20% 10%, rgba(225, 238, 252, 0.94) 0%, rgba(238, 242, 248, 0.96) 60%, rgba(244, 246, 250, 0.98) 100%);
+    --glass: rgba(255, 255, 255, 0.72);
+    --glass-high: rgba(255, 255, 255, 0.90);
+    --glass-nav: rgba(242, 245, 250, 0.84);
+    --glass-log: rgba(246, 248, 252, 0.92);
+    --outline: rgba(15, 25, 45, 0.12);
+    --highlight: rgba(255, 255, 255, 0.92);
+    --text: #161920;
+    --muted: #58606d;
+    --accent: #007aff;
+    --accent-grad: linear-gradient(180deg, #1a88ff 0%, #0071ee 100%);
+    --on-accent: #ffffff;
+    --accent-soft: rgba(0, 122, 255, 0.14);
+    --on-accent-soft: #004ea8;
+    --stop-grad: linear-gradient(180deg, #e85f52 0%, #d44437 100%);
+    --on-stop: #ffffff;
+    --ok: #107c41;
+    --ok-bg: rgba(16, 124, 65, 0.12);
+    --warn: #8a5600;
+    --warn-bg: rgba(138, 86, 0, 0.12);
+    --focus: #0066d6;
+  }
+
+  body.reduce-transparency {
+    --canvas: #17191e;
+    --glass: #22252d;
+    --glass-high: #2b2f39;
+    --glass-nav: #1d2027;
+  }
+  html.light body.reduce-transparency {
+    --canvas: #f1f4f8;
+    --glass: #ffffff;
+    --glass-high: #eceff4;
+    --glass-nav: #e9edf3;
+  }
+  body.reduce-transparency .card,
+  body.reduce-transparency .pill-option,
+  body.reduce-transparency .icon-pill,
+  body.reduce-transparency nav.bottom-nav {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  @media (prefers-reduced-transparency: reduce) {
+    .card, .pill-option, .icon-pill, nav.bottom-nav {
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .morph-hero, .odo-char, *, *::before, *::after {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    height: 100%;
+    background: transparent;
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 13.5px;
+    line-height: 1.42;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+  }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+  .app-shell {
+    height: 100vh;
+    width: 100%;
+    background: var(--canvas);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .inner-frame {
+    height: 100%;
+    width: 100%;
+    max-width: 540px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 18px 8px;
+    gap: 10px;
+    flex: none;
+  }
+  .topbar h1 {
+    margin: 0;
+    font-family: var(--font-display);
+    font-size: 21px;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+  }
+  .topbar-actions { display: flex; align-items: center; gap: 6px; }
+  .icon-pill {
+    height: 32px;
+    padding: 0 11px;
+    border-radius: 999px;
+    border: 1px solid var(--outline);
+    background: var(--glass);
+    backdrop-filter: blur(20px) saturate(160%);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+    box-shadow: inset 0 1px 0 var(--highlight);
+    color: var(--text);
+    font: 600 11.5px var(--font-sans);
+    cursor: pointer;
+    transition: background-color 150ms ease;
+    white-space: nowrap;
+  }
+  .icon-pill:hover { background: var(--glass-high); }
+
+  .pages {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 4px 16px 14px;
+    display: flex;
+    flex-direction: column;
+  }
+  .page {
+    display: none;
+    flex-direction: column;
+    flex: 1 1 auto;
+    gap: 12px;
+  }
+  .page.active { display: flex; }
+
+  /* Centerpiece IP:Port odometer matching mobile */
+  .odo-stage {
+    padding: 16px 8px 4px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .odo-btn {
+    border: none;
+    background: transparent;
+    color: var(--text);
+    font-family: var(--font-display);
+    font-size: 38px;
+    font-weight: 400;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 4px 12px;
+    border-radius: 16px;
+    transition: background-color 150ms ease, color 150ms ease;
+  }
+  .odo-btn.idle { color: var(--muted); }
+  .odo-btn:hover { background: var(--glass); }
+  .odo-char {
+    display: inline-block;
+    animation: odoRoll 240ms cubic-bezier(0.2, 0, 0, 1);
+  }
+  @keyframes odoRoll {
+    from { opacity: 0.25; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .status-chip {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 5px 12px;
+    border-radius: 999px;
+    background: var(--glass);
+    border: 1px solid var(--outline);
+    color: var(--muted);
+    font-size: 12px; font-weight: 600;
+  }
+  .status-chip.ok { background: var(--ok-bg); border-color: transparent; color: var(--ok); }
+  .status-chip.warn { background: var(--warn-bg); border-color: transparent; color: var(--warn); }
+  .status-chip .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+
+  .spacer { flex: 1 1 auto; min-height: 6px; }
+
+  /* Giant Morphing Hero Pill matching mobile & Windows */
+  .morph-hero {
+    width: 100%; height: 104px;
+    border: 1px solid rgba(255, 255, 255, 0.26);
+    border-radius: 999px;
+    background: var(--accent-grad);
+    color: var(--on-accent);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 12px 28px rgba(0, 0, 0, 0.22);
+    font-family: var(--font-display);
+    font-size: 25px;
+    font-weight: 500;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    flex: none;
+    transition: border-radius 360ms cubic-bezier(0.2, 0, 0, 1), filter 160ms ease, background 220ms ease;
+  }
+  .morph-hero:hover:not(:disabled) { filter: brightness(1.06); }
+  .morph-hero.active {
+    border-radius: 26px;
+    background: var(--stop-grad);
+    color: var(--on-stop);
+  }
+  .morph-hero:disabled { opacity: 0.65; cursor: wait; }
+
+  /* Stacked Liquid Glass capsules below Hero */
+  .stacked-pills { display: flex; flex-direction: column; gap: 8px; }
+  .pill-option {
+    width: 100%; min-height: 60px;
+    padding: 10px 18px;
+    border-radius: 999px;
+    border: 1px solid var(--outline);
+    background: var(--glass);
+    backdrop-filter: blur(22px) saturate(165%);
+    -webkit-backdrop-filter: blur(22px) saturate(165%);
+    box-shadow: inset 0 1px 0 var(--highlight);
+    color: var(--text);
+    font-family: var(--font-sans);
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    cursor: pointer; text-align: left;
+    transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+  }
+  .pill-option:hover:not(:disabled) { background: var(--glass-high); }
+  .pill-option.selected {
+    background: var(--accent-soft);
+    border-color: rgba(90, 200, 250, 0.42);
+    color: var(--on-accent-soft);
+  }
+  .pill-option.danger {
+    background: var(--stop-grad);
+    border-color: rgba(255, 255, 255, 0.24);
+    color: var(--on-stop);
+    justify-content: center;
+  }
+  .pill-option:disabled { opacity: 0.55; cursor: not-allowed; }
+  .pill-title { font-size: 15.5px; font-weight: 600; display: block; }
+  .pill-sub { font-size: 11.5px; opacity: 0.82; display: block; margin-top: 1px; }
+  .pill-radio {
+    width: 18px; height: 18px; border-radius: 50%;
+    border: 2px solid currentColor;
+    display: grid; place-items: center; flex: none;
+  }
+  .pill-option.selected .pill-radio::after {
+    content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor;
+  }
+
+  /* Glass Cards */
+  .card {
+    background: var(--glass);
+    backdrop-filter: blur(24px) saturate(165%);
+    -webkit-backdrop-filter: blur(24px) saturate(165%);
+    border: 1px solid var(--outline);
+    box-shadow: inset 0 1px 0 var(--highlight), 0 6px 20px rgba(0, 0, 0, 0.12);
+    border-radius: 22px;
+    padding: 13px 15px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .card-title { margin: 0; font-size: 14px; font-weight: 600; }
+  .kv-list { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; color: var(--muted); }
+  .kv-list strong { color: var(--text); font-weight: 600; }
+
+  .field-row { display: flex; gap: 6px; align-items: center; }
+  .mac-input {
+    flex: 1 1 auto; height: 34px; min-width: 0;
+    padding: 0 12px;
+    border-radius: 12px;
+    border: 1px solid var(--outline);
+    background: rgba(0, 0, 0, 0.22);
+    color: var(--text);
+    font: 500 12.5px var(--font-mono);
+    user-select: text;
+  }
+  html.light .mac-input { background: rgba(255, 255, 255, 0.72); }
+
+  .mini-btn {
+    height: 34px; padding: 0 12px;
+    border-radius: 12px;
+    border: 1px solid var(--outline);
+    background: var(--glass-high);
+    color: var(--text);
+    font: 600 12px var(--font-sans);
+    cursor: pointer; white-space: nowrap;
+    transition: background-color 150ms ease;
+  }
+  .mini-btn:hover { filter: brightness(1.08); }
+
+  .dev-link-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 2px 2px;
+    margin-top: 2px;
+    border: none; background: transparent;
+    border-top: 1px solid var(--outline);
+    color: var(--accent);
+    font: 600 13px var(--font-sans);
+    cursor: pointer; width: 100%; text-align: left;
+  }
+
+  .log-box {
+    background: var(--glass-log);
+    border: 1px solid var(--outline);
+    border-radius: 14px;
+    padding: 9px 11px;
+    height: 155px;
+    overflow-y: auto;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.48;
+    white-space: pre-wrap;
+    word-break: break-word;
+    user-select: text;
+  }
+
+  /* Seamless Glass Bottom 3-Tab Navigation Bar */
+  nav.bottom-nav {
+    flex: none;
+    background: var(--glass-nav);
+    backdrop-filter: blur(26px) saturate(170%);
+    -webkit-backdrop-filter: blur(26px) saturate(170%);
+    border-top: 1px solid var(--outline);
+    padding: 8px 14px 10px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+  }
+  .nav-tab {
+    border: none; background: transparent;
+    color: var(--muted);
+    padding: 4px 0 2px;
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    font: 600 12px var(--font-sans);
+    cursor: pointer;
+  }
+  .nav-indicator {
+    width: 60px; height: 32px;
+    border-radius: 999px;
+    display: grid; place-items: center;
+    transition: background-color 160ms ease, color 160ms ease;
+  }
+  .nav-tab.active { color: var(--text); }
+  .nav-tab.active .nav-indicator {
+    background: var(--accent-soft);
+    color: var(--on-accent-soft);
+  }
+</style>
+</head>
+<body>
+<div class="app-shell">
+  <div class="inner-frame">
+    <header class="topbar">
+      <h1 id="pageTitle">Приём (Mac)</h1>
+      <div class="topbar-actions">
+        <button id="refreshBtn" class="icon-pill" type="button">Обновить</button>
+        <button id="glassBtn" class="icon-pill" type="button">Стекло</button>
+        <button id="themeBtn" class="icon-pill" type="button">Тёмная</button>
+      </div>
+    </header>
+
+    <main class="pages">
+      <!-- TAB 0: ПРИЁМ -->
+      <section id="pageVpn" class="page active" aria-label="Приём интернета с телефона">
+        <div class="odo-stage">
+          <button id="vpnOdoBtn" class="odo-btn idle" type="button" title="Нажмите, чтобы скопировать IP:8080">0.0.0.0:8080</button>
+          <div id="vpnStatusBadge" class="status-chip"><span class="dot"></span><span id="vpnStatusText">Поиск шлюза телефона...</span></div>
+        </div>
+
+        <div class="card">
+          <div class="kv-list">
+            <div>Сеть Mac: <strong id="vpnAdapterInfo">Wi-Fi · порт 8080</strong></div>
+            <div>Назначение: <strong id="vpnModeSummary">Весь трафик и DoH 1.1.1.1 через телефон</strong></div>
+          </div>
+          <div class="field-row">
+            <input id="gwInput" class="mac-input" type="text" placeholder="IP телефона (например 172.20.10.1)" aria-label="IP шлюза телефона">
+            <button id="autoGwBtn" class="mini-btn" type="button">Авто</button>
+          </div>
+        </div>
+
+        <div class="spacer"></div>
+
+        <button id="vpnHeroBtn" class="morph-hero" type="button">
+          <span id="vpnHeroLabel">Запустить</span>
+        </button>
+
+        <div class="stacked-pills" role="radiogroup" aria-label="Режим подключения">
+          <button id="modeTunBtn" class="pill-option selected" type="button" role="radio" aria-checked="true">
+            <span>
+              <span class="pill-title">Полный VPN (TUN)</span>
+              <span class="pill-sub">Весь трафик Mac + DoH 1.1.1.1 (запросит пароль Mac)</span>
+            </span>
+            <span class="pill-radio" aria-hidden="true"></span>
+          </button>
+          <button id="modeProxyBtn" class="pill-option" type="button" role="radio" aria-checked="false">
+            <span>
+              <span class="pill-title">Системный прокси</span>
+              <span class="pill-sub">SOCKS5 для браузеров — мгновенно и без пароля</span>
+            </span>
+            <span class="pill-radio" aria-hidden="true"></span>
+          </button>
+        </div>
+      </section>
+
+      <!-- TAB 1: СЕТЬ -->
+      <section id="pageTools" class="page" aria-label="Проверка и быстрые действия">
+        <div class="card">
+          <h2 class="card-title">Подключение к телефону</h2>
+          <div class="kv-list">
+            <div>Интерфейс macOS: <strong id="toolsIface">--</strong></div>
+            <div>Шлюз телефона: <strong id="toolsGw">--</strong></div>
+            <div>Порт прокси: <strong>8080 (SOCKS5 / HTTP)</strong></div>
+            <div>Ядро VPN: <strong id="toolsCore">--</strong></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title">Как подключиться с Mac</h2>
+          <div class="kv-list">
+            <div>1. Включите точку доступа на телефоне и запустите на нём <strong>ShareNet</strong>.</div>
+            <div>2. Подключите Mac по Wi-Fi к телефону — IP определится автоматически.</div>
+            <div>3. На вкладке «Приём» нажмите <strong>«Запустить»</strong>.</div>
+          </div>
+        </div>
+
+        <div class="spacer"></div>
+
+        <div class="stacked-pills">
+          <button id="vpnCheckBtn" class="pill-option" type="button" style="justify-content:center;">
+            <span class="pill-title">Проверить интернет (HTTPS 204)</span>
+          </button>
+          <button id="vpnTgBtn" class="pill-option" type="button" style="justify-content:center;">
+            <span class="pill-title">Добавить прокси :8080 в Telegram</span>
+          </button>
+          <button id="copyAddrBtn" class="pill-option" type="button" style="justify-content:center;">
+            <span class="pill-title">Скопировать адрес IP:8080</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- TAB 2: СБРОС -->
+      <section id="pageReset" class="page" aria-label="Сброс и журнал">
+        <div class="card">
+          <h2 class="card-title">Состояние и подсказка</h2>
+          <div class="kv-list" id="resetSummary">
+            <div>• Полный VPN (TUN): отключён</div>
+            <div>• Системный прокси macOS: отключён</div>
+            <div style="margin-top:4px;">Полный откат останавливает туннель <code>sing-box</code>, сбрасывает системный DNS (172.19.0.2 → Empty) и выключает SOCKS5 прокси в настройках сети.</div>
+          </div>
+          <button id="githubBtn" class="dev-link-row" type="button">
+            <span style="display:inline-flex;align-items:center;gap:8px;min-width:0;">
+              <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true" style="flex-shrink:0;">
+                <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>
+              </svg>
+              <span>GitHub: github.com/TPpixel</span>
+            </span>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M9 6l6 6-6 6"/>
+            </svg>
+          </button>
+        </div>
+
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <h2 class="card-title">Журнал работы</h2>
+            <button id="clearLogBtn" class="mini-btn" type="button" style="height:28px;padding:0 10px;">Очистить</button>
+          </div>
+          <div id="logBox" class="log-box">Загрузка...</div>
+        </div>
+
+        <div class="spacer"></div>
+
+        <div class="stacked-pills">
+          <button id="resetAllBtn" class="pill-option danger" type="button">
+            <span class="pill-title">Отключить всё и откатить</span>
+          </button>
+        </div>
+      </section>
+    </main>
+
+    <nav class="bottom-nav" aria-label="Разделы ShareNet">
+      <button id="tabBtn0" class="nav-tab active" type="button">
+        <span class="nav-indicator" aria-hidden="true">
+          <svg width="21" height="21" viewBox="0 -960 960 960" fill="currentColor">
+            <path d="M480-320 280-520l56-58 104 104v-326h80v326l104-104 56 58-200 200ZM240-160q-33 0-56.5-23.5T160-240v-120h80v120h480v-120h80v120q0 33-23.5 56.5T720-160H240Z"/>
+          </svg>
+        </span>
+        <span>Приём</span>
+      </button>
+      <button id="tabBtn1" class="nav-tab" type="button">
+        <span class="nav-indicator" aria-hidden="true">
+          <svg width="21" height="21" viewBox="0 -960 960 960" fill="currentColor">
+            <path d="M480-400q-33 0-56.5-23.5T400-480q0-33 23.5-56.5T480-560q33 0 56.5 23.5T560-480q0 33-23.5 56.5T480-400ZM338-338l-56 56q-40-40-61-91.5T200-480q0-55 21-106.5t61-91.5q40-40 91.5-61T480-760q55 0 106.5 21t91.5 61q40 40 61 91.5T760-480q0 55-21 106.5T678-282l-56-56q29-29 43.5-65.5T680-480q0-83-58.5-141.5T480-680q-83 0-141.5 58.5T280-480q0 40 14.5 76.5T338-338Zm-142 142-56 56q-68-68-104-154.5T0-480q0-99 36-185.5T140-820q68-68 154.5-104T480-960q99 0 185.5 36T820-820q68 68 104 154.5T960-480q0 99-36 185.5T820-140l-56-56q56-56 86-129t30-155q0-167-116.5-283.5T480-880q-167 0-283.5 116.5T80-480q0 82 30 155t86 129Z"/>
+          </svg>
+        </span>
+        <span>Сеть</span>
+      </button>
+      <button id="tabBtn2" class="nav-tab" type="button">
+        <span class="nav-indicator" aria-hidden="true">
+          <svg width="21" height="21" viewBox="0 -960 960 960" fill="currentColor">
+            <path d="M480-160q-134 0-227-93t-93-227q0-134 93-227t227-93q69 0 132 28.5T720-690v-110h80v280H520v-80h168q-32-56-87.5-88T480-720q-100 0-170 70t-70 170q0 100 70 170t170 70q77 0 139-44t87-116h84q-28 106-114 173t-196 67Z"/>
+          </svg>
+        </span>
+        <span>Сброс</span>
+      </button>
+    </nav>
+  </div>
+</div>
+
+<script>
+(function () {
+  var tabTitles = ["Приём (Mac)", "Сеть и проверка", "Сброс и откат"];
+  var tabPages = [
+    document.getElementById("pageVpn"),
+    document.getElementById("pageTools"),
+    document.getElementById("pageReset")
+  ];
+  var tabBtns = [
+    document.getElementById("tabBtn0"),
+    document.getElementById("tabBtn1"),
+    document.getElementById("tabBtn2")
+  ];
+
+  var state = {
+    tab: 0,
+    mode: "tun",
+    hasSingBox: true,
+    connected: false,
+    connectedMode: "",
+    gateway: "",
+    service: "Wi-Fi",
+    reachable: false,
+    busy: false,
+    lastOdo: "0.0.0.0:8080",
+    clearedAt: 0
+  };
+
+  var el = {
+    pageTitle: document.getElementById("pageTitle"),
+    refreshBtn: document.getElementById("refreshBtn"),
+    glassBtn: document.getElementById("glassBtn"),
+    themeBtn: document.getElementById("themeBtn"),
+    vpnOdoBtn: document.getElementById("vpnOdoBtn"),
+    vpnStatusBadge: document.getElementById("vpnStatusBadge"),
+    vpnStatusText: document.getElementById("vpnStatusText"),
+    vpnAdapterInfo: document.getElementById("vpnAdapterInfo"),
+    vpnModeSummary: document.getElementById("vpnModeSummary"),
+    gwInput: document.getElementById("gwInput"),
+    autoGwBtn: document.getElementById("autoGwBtn"),
+    vpnHeroBtn: document.getElementById("vpnHeroBtn"),
+    vpnHeroLabel: document.getElementById("vpnHeroLabel"),
+    modeTunBtn: document.getElementById("modeTunBtn"),
+    modeProxyBtn: document.getElementById("modeProxyBtn"),
+    toolsIface: document.getElementById("toolsIface"),
+    toolsGw: document.getElementById("toolsGw"),
+    toolsCore: document.getElementById("toolsCore"),
+    vpnCheckBtn: document.getElementById("vpnCheckBtn"),
+    vpnTgBtn: document.getElementById("vpnTgBtn"),
+    copyAddrBtn: document.getElementById("copyAddrBtn"),
+    resetSummary: document.getElementById("resetSummary"),
+    githubBtn: document.getElementById("githubBtn"),
+    clearLogBtn: document.getElementById("clearLogBtn"),
+    logBox: document.getElementById("logBox"),
+    resetAllBtn: document.getElementById("resetAllBtn")
+  };
+
+  function renderOdo(text) {
+    if (text === state.lastOdo && el.vpnOdoBtn.childNodes.length) return;
+    var prev = state.lastOdo;
+    state.lastOdo = text;
+    el.vpnOdoBtn.innerHTML = "";
+    for (var i = 0; i < text.length; i++) {
+      var sp = document.createElement("span");
+      sp.textContent = text[i];
+      if (prev[i] !== text[i]) sp.className = "odo-char";
+      el.vpnOdoBtn.appendChild(sp);
+    }
+  }
+
+  function setTab(idx) {
+    state.tab = idx;
+    el.pageTitle.textContent = tabTitles[idx];
+    for (var i = 0; i < 3; i++) {
+      tabPages[i].classList.toggle("active", i === idx);
+      tabBtns[i].classList.toggle("active", i === idx);
+    }
+  }
+  tabBtns.forEach(function (b, idx) { b.addEventListener("click", function () { setTab(idx); }); });
+
+  function api(path, body) {
+    return fetch(path, {
+      method: body !== undefined ? "POST" : "GET",
+      headers: body !== undefined ? { "Content-Type": "application/json" } : {},
+      body: body !== undefined ? JSON.stringify(body) : undefined
+    }).then(function (r) { return r.json(); });
+  }
+
+  function render(data) {
+    if (!data) return;
+    state.hasSingBox = !!data.hasSingBox;
+    state.connected = !!data.connected;
+    state.connectedMode = data.connectedMode || "";
+    state.gateway = data.gateway || "";
+    state.service = data.service || "Wi-Fi";
+    state.reachable = !!data.reachable;
+    if (!state.hasSingBox && state.mode === "tun") state.mode = "proxy";
+
+    var addrText = state.gateway ? (state.gateway + ":8080") : "0.0.0.0:8080";
+    renderOdo(addrText);
+    el.vpnOdoBtn.classList.toggle("idle", !state.connected && !state.reachable);
+
+    el.vpnAdapterInfo.textContent = state.service + " · порт 8080";
+    el.vpnModeSummary.textContent = state.mode === "tun"
+      ? "Весь трафик Mac и DoH 1.1.1.1"
+      : "SOCKS5 прокси без пароля администратора";
+
+    if (!el.gwInput.matches(":focus") && !el.gwInput.value && state.gateway) {
+      el.gwInput.value = state.gateway;
+    }
+
+    el.modeTunBtn.disabled = state.connected || !state.hasSingBox;
+    el.modeProxyBtn.disabled = state.connected;
+    el.modeTunBtn.classList.toggle("selected", state.mode === "tun");
+    el.modeProxyBtn.classList.toggle("selected", state.mode === "proxy");
+    el.modeTunBtn.setAttribute("aria-checked", state.mode === "tun" ? "true" : "false");
+    el.modeProxyBtn.setAttribute("aria-checked", state.mode === "proxy" ? "true" : "false");
+
+    if (state.connected) {
+      el.vpnStatusBadge.className = "status-chip ok";
+      el.vpnStatusText.textContent = state.connectedMode === "tun" ? "VPN-туннель активен" : "Системный прокси активен";
+      el.vpnHeroBtn.classList.add("active");
+      el.vpnHeroLabel.textContent = state.busy ? "Отключаю..." : "Стоп";
+    } else if (state.reachable) {
+      el.vpnStatusBadge.className = "status-chip ok";
+      el.vpnStatusText.textContent = "Телефон найден (:8080)";
+      el.vpnHeroBtn.classList.remove("active");
+      el.vpnHeroLabel.textContent = state.busy ? "Подключаю..." : "Запустить";
+    } else {
+      el.vpnStatusBadge.className = "status-chip warn";
+      el.vpnStatusText.textContent = state.gateway ? "Порт 8080 не отвечает" : "Подключитесь к Wi-Fi телефона";
+      el.vpnHeroBtn.classList.remove("active");
+      el.vpnHeroLabel.textContent = state.busy ? "Подключаю..." : "Запустить";
+    }
+    el.vpnHeroBtn.disabled = state.busy;
+
+    el.toolsIface.textContent = state.service;
+    el.toolsGw.textContent = state.gateway || "не найден";
+    el.toolsCore.textContent = state.hasSingBox ? "sing-box + networksetup" : "только networksetup";
+
+    el.resetSummary.innerHTML =
+      "<div>• Полный VPN (TUN): <strong>" + (state.connectedMode === "tun" ? "активен" : "отключён") + "</strong></div>" +
+      "<div>• Системный прокси macOS: <strong>" + (state.connectedMode === "proxy" ? "активен" : "отключён") + "</strong></div>" +
+      "<div style='margin-top:4px;'>Полный откат останавливает туннель sing-box, возвращает стандартный DNS (" + state.service + ") и отключает SOCKS5 прокси.</div>";
+
+    if (Array.isArray(data.logs)) {
+      var visible = data.logs.slice(state.clearedAt);
+      var atEnd = el.logBox.scrollHeight - el.logBox.clientHeight <= el.logBox.scrollTop + 24;
+      el.logBox.textContent = visible.join("\n") || "Журнал пуст.";
+      if (atEnd) el.logBox.scrollTop = el.logBox.scrollHeight;
+    }
+  }
+
+  function refresh() {
+    var manual = el.gwInput.value.trim();
+    return api("/api/status?gw=" + encodeURIComponent(manual)).then(render).catch(function () {});
+  }
+
+  el.modeTunBtn.addEventListener("click", function () {
+    if (state.connected || !state.hasSingBox) return;
+    state.mode = "tun";
+    refresh();
+  });
+  el.modeProxyBtn.addEventListener("click", function () {
+    if (state.connected) return;
+    state.mode = "proxy";
+    refresh();
+  });
+  el.vpnHeroBtn.addEventListener("click", function () {
+    if (state.busy) return;
+    state.busy = true;
+    render({ ...state, logs: null });
+    var ep = state.connected ? "/api/disconnect" : "/api/connect";
+    api(ep, { mode: state.mode, gateway: el.gwInput.value.trim() })
+      .then(function (r) { state.busy = false; render(r); })
+      .catch(function () { state.busy = false; refresh(); });
+  });
+
+  el.vpnOdoBtn.addEventListener("click", function () {
+    api("/api/copy", { gateway: el.gwInput.value.trim() || state.gateway }).then(render);
+  });
+  el.refreshBtn.addEventListener("click", refresh);
+  el.autoGwBtn.addEventListener("click", function () { el.gwInput.value = ""; refresh(); });
+  el.vpnCheckBtn.addEventListener("click", function () { api("/api/check", { gateway: el.gwInput.value.trim() }).then(render); });
+  el.vpnTgBtn.addEventListener("click", function () { api("/api/open-tg", { gateway: el.gwInput.value.trim() }).then(render); });
+  el.copyAddrBtn.addEventListener("click", function () { api("/api/copy", { gateway: el.gwInput.value.trim() || state.gateway }).then(render); });
+  el.githubBtn.addEventListener("click", function () { api("/api/open-github", {}).then(render); });
+  el.clearLogBtn.addEventListener("click", function () { state.clearedAt += el.logBox.textContent.split("\n").length; el.logBox.textContent = "Журнал очищен."; });
+  el.resetAllBtn.addEventListener("click", function () { api("/api/disconnect", {}).then(render); });
+
+  el.themeBtn.addEventListener("click", function () {
+    var light = document.documentElement.classList.toggle("light");
+    el.themeBtn.textContent = light ? "Светлая" : "Тёмная";
+  });
+  el.glassBtn.addEventListener("click", function () {
+    var reduced = document.body.classList.toggle("reduce-transparency");
+    el.glassBtn.textContent = reduced ? "Без стекла" : "Стекло";
+  });
+
+  window.addEventListener("pagehide", function () {
+    if (navigator.sendBeacon) navigator.sendBeacon("/api/bye");
+  });
+
+  refresh();
+  setInterval(refresh, 2500);
+})();
+</script>
+</body>
+</html>
