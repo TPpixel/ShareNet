@@ -1,6 +1,6 @@
 # ShareNet для macOS
 
-Клиентское приложение **ShareNet** для macOS в стиле Apple **Liquid Glass**, предназначенное для приёма интернета/VPN с телефона Android (через точку доступа Wi-Fi или USB-модем) на порт `:8080`.
+Клиентское приложение **ShareNet** для macOS, предназначенное для приёма интернета/VPN с телефона Android (через точку доступа Wi-Fi или USB-модем) на порт `:8080`.
 
 ## Состав проекта
 
@@ -8,7 +8,7 @@
 - **`ShareNet.app`** — готовый `.app`-бандл для macOS (запускает бинарник `ShareNet` + окно интерфейса).
 - **`src/HotspotVPNApp.swift` и `build_mac.sh`** — нативный SwiftUI/AppKit интерфейс (при наличии Xcode Command Line Tools).
 - **`ShareNet.command`** — автономный терминальный переключатель VPN (`sing-box` + DoH `1.1.1.1`).
-- **`preview-liquid-glass.html`** — офлайн-превью интерфейса Liquid Glass в браузере.
+- **`preview-liquid-glass.html`** — офлайн-превью веб-интерфейса в браузере.
 
 ## Режимы работы
 
