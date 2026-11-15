@@ -375,14 +375,27 @@ func (a *ShareApp) startSharing(dns string, disablePrivDns, startProxy bool) {
 
 	a.adb.ResetGnirehtetState(serial)
 
+	var socksWarn error
 	a.mu.Lock()
-	if a.socks == nil {
-		a.socks = socks5.New(UsbSocksPort)
-		if err := a.socks.Start(); err != nil {
-			a.logf("Предупреждение SOCKS5 :%d: %v", UsbSocksPort, err)
+	needSocks := a.socks == nil
+	a.mu.Unlock()
+	if needSocks {
+		srv := socks5.New(UsbSocksPort)
+		if err := srv.Start(); err != nil {
+			socksWarn = err
+		} else {
+			a.mu.Lock()
+			if a.socks == nil {
+				a.socks = srv
+			} else {
+				srv.Stop()
+			}
+			a.mu.Unlock()
 		}
 	}
-	a.mu.Unlock()
+	if socksWarn != nil {
+		a.logf("Предупреждение SOCKS5 :%d: %v", UsbSocksPort, socksWarn)
+	}
 
 	_ = a.adb.RunAdb(3*time.Second, "-s", serial, "reverse", "--remove", fmt.Sprintf("tcp:%d", UsbSocksPort))
 	revRes := a.adb.RunAdb(5*time.Second, "-s", serial, "reverse", fmt.Sprintf("tcp:%d", UsbSocksPort), fmt.Sprintf("tcp:%d", UsbSocksPort))

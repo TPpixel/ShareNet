@@ -273,9 +273,7 @@ func (h *Helper) OpenHotspotSettings(serial string) CommandResult {
 }
 
 func (h *Helper) ResetGnirehtetState(serial string) {
-	killCmd := exec.Command("taskkill.exe", "/F", "/IM", "gnirehtet.exe")
-	netutil.HideWindow(killCmd)
-	_ = killCmd.Run()
+	_ = runCommand("taskkill.exe", "", nil, 3*time.Second, "/F", "/IM", "gnirehtet.exe")
 
 	if serial != "" {
 		_ = h.RunGnirehtet(3*time.Second, "stop", serial)
