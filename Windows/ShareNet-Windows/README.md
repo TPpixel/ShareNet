@@ -19,7 +19,8 @@
 
 ## Запуск и сборка
 
-- **Готовый запуск:** запустите `ShareNet.exe` (все утилиты — `adb`, `gnirehtet`, `sing-box`, `ShareNet.apk` — встроены внутрь exe и распаковываются в `%LOCALAPPDATA%\ShareNet\tools` при старте). Для запуска с сетевой папки используйте `ShareNet_Start.bat`.
+- **Root-раздача в 1 клик (без клиента на принимающем ПК/Mac):** запустите [`ShareNet_Root_Hotspot.bat`](./ShareNet_Root_Hotspot.bat) при подключённом по USB рутованном Android. Скрипт сам поднимет `gnirehtet` (`tun0`), включит точку доступа и настроит прозрачный NAT (`iptables` + `ip rule` + DNS `1.1.1.1`) с автоматическим откатом при выходе.
+- **Готовый запуск (без Root):** запустите `ShareNet.exe` (все утилиты — `adb`, `gnirehtet`, `sing-box`, `ShareNet.apk` — встроены внутрь exe и распаковываются в `%LOCALAPPDATA%\ShareNet\tools` при старте). Для запуска с сетевой папки используйте `ShareNet_Start.bat`.
 - **Сборка из исходников (Go 1.21+):**
   ```powershell
   .\build.ps1
