@@ -19,7 +19,7 @@
 
 ## Запуск и сборка
 
-- **Root-раздача в 1 клик (без клиента на принимающем ПК/Mac):** запустите [`ShareNet_Root_Hotspot.bat`](./ShareNet_Root_Hotspot.bat) при подключённом по USB рутованном Android. Скрипт сам поднимет `gnirehtet` (`tun0`), включит точку доступа и настроит прозрачный NAT (`iptables` + `ip rule` + DNS `1.1.1.1`) с автоматическим откатом при выходе.
+- **Root-раздача (автоматически в `ShareNet.exe`):** при подключении рутованного Android (Magisk / KernelSU / APatch) `ShareNet.exe` автоматически определяет Root (`· Root`), показывает переключатель «Прозрачный Wi-Fi (Root NAT)» и поднимает прозрачный NAT (`iptables -w` + `ip rule` + DNS DNAT) при активной точке доступа — клиенты Wi-Fi работают без установки приложений и настройки прокси. Автономный скрипт [`ShareNet_Root_Hotspot.bat`](./ShareNet_Root_Hotspot.bat) также обновлён.
 - **Готовый запуск (без Root):** запустите `ShareNet.exe` (все утилиты — `adb`, `gnirehtet`, `sing-box`, `ShareNet.apk` — встроены внутрь exe и распаковываются в `%LOCALAPPDATA%\ShareNet\tools` при старте). Для запуска с сетевой папки используйте `ShareNet_Start.bat`.
 - **Сборка из исходников (Go 1.21+):**
   ```powershell

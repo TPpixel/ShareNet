@@ -54,6 +54,9 @@ type AppState struct {
 	AutoStartUsb   bool               `json:"autoStartUsb"`
 	DisablePrivDns bool               `json:"disablePrivDns"`
 	StartProxy     bool               `json:"startProxy"`
+	IsRooted       bool               `json:"isRooted"`
+	RootHotspot    bool               `json:"rootHotspot"`
+	RootNatActive  bool               `json:"rootNatActive"`
 	ProxyPort      int                `json:"proxyPort"`
 	UsbSocksPort   int                `json:"usbSocksPort"`
 	GitHubURL      string             `json:"githubUrl"`
@@ -72,6 +75,11 @@ type ShareApp struct {
 	darkTheme         bool
 	activeSerial      string
 	autoStartedSerial string
+	rootCheckedSerial string
+	isRooted          bool
+	rootHotspot       bool
+	rootNatBusy       bool
+	rootNat           adb.RootHotspotState
 	dnsValue          string
 	deviceState       string
 	deviceName        string
@@ -99,6 +107,7 @@ func newShareApp() *ShareApp {
 		autoStartUsb:   true,
 		disablePrivDns: true,
 		startProxy:     true,
+		rootHotspot:    true,
 		apiToken:       hex.EncodeToString(b),
 	}
 	a.vpn = hotspotvpn.NewManagerWithRoot(runtimeRoot, a.log)
@@ -230,6 +239,9 @@ func (a *ShareApp) snapshot() AppState {
 		AutoStartUsb:   a.autoStartUsb,
 		DisablePrivDns: a.disablePrivDns,
 		StartProxy:     a.startProxy,
+		IsRooted:       a.isRooted,
+		RootHotspot:    a.rootHotspot,
+		RootNatActive:  a.rootNat.Applied,
 		ProxyPort:      ProxyPort,
 		UsbSocksPort:   UsbSocksPort,
 		GitHubURL:      "https://github.com/TPpixel/ShareNet",
@@ -263,12 +275,30 @@ func (a *ShareApp) refreshDevices() {
 	}
 
 	a.mu.Lock()
+	checkedSerial := a.rootCheckedSerial
+	a.mu.Unlock()
+
+	if ready != nil && checkedSerial != ready.Serial {
+		rooted := a.adb.CheckRootAccess(ready.Serial)
+		a.mu.Lock()
+		a.rootCheckedSerial = ready.Serial
+		a.isRooted = rooted
+		a.mu.Unlock()
+		if rooted {
+			a.log("Обнаружен Root-доступ на телефоне — прозрачный Wi-Fi режим доступен.")
+		}
+	}
+
+	a.mu.Lock()
 	a.hotspot = hotspot
 
 	if len(devices) == 0 {
 		shouldStop := a.isSharing || a.gnirehtetCmd != nil || a.socks != nil
 		a.activeSerial = ""
 		a.autoStartedSerial = ""
+		a.rootCheckedSerial = ""
+		a.isRooted = false
+		a.rootNat = adb.RootHotspotState{}
 		a.deviceState = "none"
 		a.deviceName = "Телефон не обнаружен. Подключите USB и включите Отладку по USB."
 		a.mu.Unlock()
@@ -307,11 +337,28 @@ func (a *ShareApp) refreshDevices() {
 	dns := a.dnsValue
 	disablePriv := a.disablePrivDns
 	startProxy := a.startProxy
+	shouldApplyRoot := ready != nil && a.isSharing && a.isRooted && a.rootHotspot && hotspot.IsActive && !a.rootNat.Applied && !a.rootNatBusy
+	if shouldApplyRoot {
+		a.rootNatBusy = true
+	}
+	shouldDropRoot := ready != nil && (!a.isSharing || !a.rootHotspot || !hotspot.IsActive) && a.rootNat.Applied && !a.rootNatBusy
+	var rootToDrop adb.RootHotspotState
+	if shouldDropRoot {
+		a.rootNatBusy = true
+		rootToDrop = a.rootNat
+		a.rootNat = adb.RootHotspotState{}
+	}
 	a.mu.Unlock()
 
 	if shouldAutoStart {
 		a.logf("Автозапуск для %s...", display)
 		go a.startSharing(dns, disablePriv, startProxy)
+	}
+	if shouldApplyRoot {
+		go a.applyRootHotspotAsync(ready.Serial, dns)
+	}
+	if shouldDropRoot {
+		go a.stopRootHotspotAsync(ready.Serial, rootToDrop)
 	}
 }
 
@@ -467,7 +514,54 @@ func (a *ShareApp) startSharing(dns string, disablePrivDns, startProxy bool) {
 	hotspot := a.adb.DetectHotspotStatus(serial)
 	a.mu.Lock()
 	a.hotspot = hotspot
+	shouldRootNat := a.isRooted && a.rootHotspot && hotspot.IsActive && !a.rootNat.Applied && !a.rootNatBusy
+	if shouldRootNat {
+		a.rootNatBusy = true
+	}
 	a.mu.Unlock()
+	if shouldRootNat {
+		go a.applyRootHotspotAsync(serial, dns)
+	}
+}
+
+func (a *ShareApp) applyRootHotspotAsync(serial, dns string) {
+	defer func() {
+		a.mu.Lock()
+		a.rootNatBusy = false
+		a.mu.Unlock()
+	}()
+	for attempt := 0; attempt < 4; attempt++ {
+		a.mu.Lock()
+		stillWanted := a.isSharing && a.isRooted && a.rootHotspot && a.activeSerial == serial
+		a.mu.Unlock()
+		if !stillWanted {
+			return
+		}
+		st, err := a.adb.StartRootHotspot(serial, dns)
+		if err == nil {
+			a.mu.Lock()
+			a.rootNat = st
+			a.mu.Unlock()
+			a.logf("Root-раздача активна (%s -> %s, DNS %s) — клиенты Wi-Fi работают без прокси.", st.ApIface, st.TunIface, st.DnsServer)
+			return
+		}
+		if strings.Contains(err.Error(), "NO_TUN") && attempt < 3 {
+			time.Sleep(1200 * time.Millisecond)
+			continue
+		}
+		a.logf("Предупреждение Root-маршрутизации: %v", err)
+		return
+	}
+}
+
+func (a *ShareApp) stopRootHotspotAsync(serial string, st adb.RootHotspotState) {
+	defer func() {
+		a.mu.Lock()
+		a.rootNatBusy = false
+		a.mu.Unlock()
+	}()
+	a.adb.StopRootHotspot(serial, st)
+	a.log("Root-маршрутизация (NAT) на телефоне отключена.")
 }
 
 func (a *ShareApp) stopSharing() {
@@ -492,10 +586,15 @@ func (a *ShareApp) cleanupProcessesAndRestoreDns() {
 	backup := a.dnsBackup
 	a.dnsBackup = adb.PrivateDnsBackup{}
 	startProxy := a.startProxy
+	rootNat := a.rootNat
+	a.rootNat = adb.RootHotspotState{}
 	a.isSharing = false
 	a.isBusy = false
 	a.mu.Unlock()
 
+	if serial != "" && rootNat.Applied {
+		a.adb.StopRootHotspot(serial, rootNat)
+	}
 	if socks != nil {
 		socks.Stop()
 	}
@@ -593,9 +692,13 @@ func (a *ShareApp) startServer() (string, error) {
 			AutoStartUsb   *bool   `json:"autoStartUsb"`
 			DisablePrivDns *bool   `json:"disablePrivDns"`
 			StartProxy     *bool   `json:"startProxy"`
+			RootHotspot    *bool   `json:"rootHotspot"`
 			Dns            *string `json:"dns"`
 		}
 		if json.NewDecoder(r.Body).Decode(&req) == nil {
+			var triggerApply, triggerDrop bool
+			var serial, dns string
+			var rootToDrop adb.RootHotspotState
 			a.mu.Lock()
 			if req.AutoStartUsb != nil {
 				a.autoStartUsb = *req.AutoStartUsb
@@ -606,10 +709,32 @@ func (a *ShareApp) startServer() (string, error) {
 			if req.StartProxy != nil {
 				a.startProxy = *req.StartProxy
 			}
+			if req.RootHotspot != nil {
+				a.rootHotspot = *req.RootHotspot
+			}
 			if req.Dns != nil {
 				a.dnsValue = strings.TrimSpace(*req.Dns)
 			}
+			if a.isSharing && a.isRooted && a.activeSerial != "" && !a.rootNatBusy {
+				if a.rootHotspot && a.hotspot.IsActive && !a.rootNat.Applied {
+					a.rootNatBusy = true
+					triggerApply = true
+					serial = a.activeSerial
+					dns = a.dnsValue
+				} else if !a.rootHotspot && a.rootNat.Applied {
+					a.rootNatBusy = true
+					triggerDrop = true
+					serial = a.activeSerial
+					rootToDrop = a.rootNat
+					a.rootNat = adb.RootHotspotState{}
+				}
+			}
 			a.mu.Unlock()
+			if triggerApply {
+				go a.applyRootHotspotAsync(serial, dns)
+			} else if triggerDrop {
+				go a.stopRootHotspotAsync(serial, rootToDrop)
+			}
 		}
 		return a.snapshot()
 	})

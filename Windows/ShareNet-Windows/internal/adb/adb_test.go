@@ -43,3 +43,15 @@ func TestParseHotspotStatus(t *testing.T) {
 		t.Fatalf("unexpected fallback hotspot status: %+v", st2)
 	}
 }
+
+func TestPrimaryDnsIP(t *testing.T) {
+	if got := PrimaryDnsIP("192.168.1.1:1.1.1.1"); got != "1.1.1.1" {
+		t.Fatalf("got %q, want 1.1.1.1", got)
+	}
+	if got := PrimaryDnsIP("192.168.0.1"); got != "192.168.0.1" {
+		t.Fatalf("got %q, want 192.168.0.1", got)
+	}
+	if got := PrimaryDnsIP("invalid"); got != "1.1.1.1" {
+		t.Fatalf("got %q, want 1.1.1.1 fallback", got)
+	}
+}

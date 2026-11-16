@@ -403,3 +403,208 @@ func serialArgs(serial string, rest ...string) []string {
 	args = append(args, rest...)
 	return args
 }
+
+// RootHotspotState holds the active transparent NAT state applied on a rooted Android device.
+type RootHotspotState struct {
+	Applied   bool   `json:"applied"`
+	TunIface  string `json:"tunIface"`
+	ApIface   string `json:"apIface"`
+	DnsServer string `json:"dnsServer"`
+}
+
+// CheckRootAccess checks whether ADB shell can obtain uid=0 via su (Magisk / KernelSU / APatch).
+func (h *Helper) CheckRootAccess(serial string) bool {
+	if serial == "" {
+		return false
+	}
+	res := h.RunAdb(4*time.Second, serialArgs(serial, "shell", "su", "-c", "id")...)
+	return strings.Contains(res.Output, "uid=0(")
+}
+
+// PrimaryDnsIP extracts the best IPv4 DNS server for transparent DNAT on the phone.
+func PrimaryDnsIP(dnsCsv string) string {
+	var first string
+	for _, part := range strings.FieldsFunc(dnsCsv, func(r rune) bool {
+		return r == ',' || r == ':' || r == ';' || r == ' '
+	}) {
+		p := strings.TrimSpace(part)
+		if !isSimpleIPv4(p) {
+			continue
+		}
+		if first == "" {
+			first = p
+		}
+		// Prefer public DNS over local router LAN IPs for reliable DNAT through tun0.
+		if !strings.HasPrefix(p, "192.168.") && !strings.HasPrefix(p, "10.") && !strings.HasPrefix(p, "127.") {
+			return p
+		}
+	}
+	if first != "" {
+		return first
+	}
+	return "1.1.1.1"
+}
+
+func isSimpleIPv4(s string) bool {
+	parts := strings.Split(s, ".")
+	if len(parts) != 4 {
+		return false
+	}
+	for _, p := range parts {
+		v, err := strconv.Atoi(p)
+		if err != nil || v < 0 || v > 255 {
+			return false
+		}
+	}
+	return true
+}
+
+const rootHotspotScript = `#!/system/bin/sh
+find_tun() {
+  ip -o -4 addr show 2>/dev/null | while read -r _ iface _ cidr _; do
+    case "$iface" in
+      tun*) echo "$iface"; return 0 ;;
+    esac
+  done
+}
+find_ap() {
+  ip -o -4 addr show 2>/dev/null | while read -r _ iface _ cidr _; do
+    case "$iface" in
+      ap*|swlan*|softap*|wlan1*|wlan2*|rndis*|usb*|ncm*)
+        echo "$iface $cidr"; return 0 ;;
+      wlan0)
+        case "$cidr" in
+          192.168.43.*|192.168.137.*) echo "$iface $cidr"; return 0 ;;
+        esac ;;
+    esac
+  done
+}
+ipt_fwd_est_add() {
+  iptables -w -I FORWARD 1 -i "$1" -o "$2" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || \
+  iptables -w -I FORWARD 1 -i "$1" -o "$2" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null
+}
+ipt_fwd_est_del() {
+  iptables -w -D FORWARD -i "$1" -o "$2" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null
+  iptables -w -D FORWARD -i "$1" -o "$2" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null
+}
+case "$1" in
+  start)
+    DNS="$2"
+    [ -z "$DNS" ] && DNS="1.1.1.1"
+    TUN=$(find_tun)
+    if [ -z "$TUN" ]; then
+      echo "ERR:NO_TUN"
+      exit 2
+    fi
+    AP_INFO=$(find_ap)
+    if [ -z "$AP_INFO" ]; then
+      echo "ERR:NO_AP"
+      exit 3
+    fi
+    AP=$(echo "$AP_INFO" | awk '{print $1}')
+    CIDR=$(echo "$AP_INFO" | awk '{print $2}')
+    SUBNET=$(ip -o -4 route show dev "$AP" proto kernel 2>/dev/null | while read -r net _; do echo "$net"; break; done)
+    [ -z "$SUBNET" ] && SUBNET="$CIDR"
+    sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1
+    sysctl -w net.ipv4.conf.all.rp_filter=0 >/dev/null 2>&1
+    sysctl -w net.ipv4.conf."$TUN".rp_filter=0 >/dev/null 2>&1
+    sysctl -w net.ipv4.conf."$AP".rp_filter=0 >/dev/null 2>&1
+    while ip rule del pref 100 2>/dev/null; do :; done
+    ip route flush table 999 2>/dev/null
+    ip route replace "$SUBNET" dev "$AP" table 999
+    ip route replace default dev "$TUN" table 999
+    ip rule add from "$SUBNET" lookup 999 pref 100
+    ip rule add to "$SUBNET" lookup 999 pref 100
+    ip rule add iif "$AP" lookup 999 pref 100
+    iptables -w -D FORWARD -i "$AP" -o "$TUN" -j ACCEPT 2>/dev/null
+    ipt_fwd_est_del "$TUN" "$AP"
+    iptables -w -I FORWARD 1 -i "$AP" -o "$TUN" -j ACCEPT
+    ipt_fwd_est_add "$TUN" "$AP"
+    iptables -w -t nat -D POSTROUTING -o "$TUN" -j MASQUERADE 2>/dev/null
+    iptables -w -t nat -I POSTROUTING 1 -o "$TUN" -j MASQUERADE
+    iptables -w -t nat -D PREROUTING -i "$AP" -p udp --dport 53 -j DNAT --to-destination "$DNS":53 2>/dev/null
+    iptables -w -t nat -D PREROUTING -i "$AP" -p tcp --dport 53 -j DNAT --to-destination "$DNS":53 2>/dev/null
+    iptables -w -t nat -I PREROUTING 1 -i "$AP" -p udp --dport 53 -j DNAT --to-destination "$DNS":53
+    iptables -w -t nat -I PREROUTING 1 -i "$AP" -p tcp --dport 53 -j DNAT --to-destination "$DNS":53
+    iptables -w -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null
+    iptables -w -t mangle -I FORWARD 1 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+    echo "OK:$TUN:$AP"
+    ;;
+  stop)
+    TUN="$2"
+    AP="$3"
+    DNS="$4"
+    [ -z "$DNS" ] && DNS="1.1.1.1"
+    while ip rule del pref 100 2>/dev/null; do :; done
+    ip route flush table 999 2>/dev/null
+    if [ -n "$AP" ] && [ -n "$TUN" ]; then
+      iptables -w -D FORWARD -i "$AP" -o "$TUN" -j ACCEPT 2>/dev/null
+      ipt_fwd_est_del "$TUN" "$AP"
+      iptables -w -t nat -D POSTROUTING -o "$TUN" -j MASQUERADE 2>/dev/null
+      iptables -w -t nat -D PREROUTING -i "$AP" -p udp --dport 53 -j DNAT --to-destination "$DNS":53 2>/dev/null
+      iptables -w -t nat -D PREROUTING -i "$AP" -p tcp --dport 53 -j DNAT --to-destination "$DNS":53 2>/dev/null
+    fi
+    iptables -w -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null
+    ;;
+esac
+`
+
+func (h *Helper) ensureRootScript(serial string) error {
+	tmpFile, err := os.CreateTemp("", "sharenet_root_*.sh")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+	_, wErr := tmpFile.WriteString(rootHotspotScript)
+	cErr := tmpFile.Close()
+	if wErr != nil {
+		return wErr
+	}
+	if cErr != nil {
+		return cErr
+	}
+	res := h.RunAdb(10*time.Second, serialArgs(serial, "push", tmpPath, "/data/local/tmp/sharenet_root.sh")...)
+	if res.ExitCode != 0 {
+		return fmt.Errorf("adb push root script failed: %s", res.Output)
+	}
+	_ = h.RunAdb(5*time.Second, serialArgs(serial, "shell", "chmod", "755", "/data/local/tmp/sharenet_root.sh")...)
+	return nil
+}
+
+// StartRootHotspot configures transparent NAT routing from the Android Wi-Fi hotspot to tun0.
+func (h *Helper) StartRootHotspot(serial, dnsCsv string) (RootHotspotState, error) {
+	if err := h.ensureRootScript(serial); err != nil {
+		return RootHotspotState{}, err
+	}
+	dnsIP := PrimaryDnsIP(dnsCsv)
+	res := h.RunAdb(10*time.Second, serialArgs(serial, "shell", "su", "-c", "sh /data/local/tmp/sharenet_root.sh start "+dnsIP)...)
+	for _, line := range strings.Split(strings.ReplaceAll(res.Output, "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "OK:") {
+			parts := strings.Split(strings.TrimPrefix(line, "OK:"), ":")
+			if len(parts) == 2 {
+				return RootHotspotState{
+					Applied:   true,
+					TunIface:  parts[0],
+					ApIface:   parts[1],
+					DnsServer: dnsIP,
+				}, nil
+			}
+		}
+		if strings.HasPrefix(line, "ERR:") {
+			return RootHotspotState{}, fmt.Errorf("%s", strings.TrimPrefix(line, "ERR:"))
+		}
+	}
+	return RootHotspotState{}, fmt.Errorf("root NAT setup failed (exit %d): %s", res.ExitCode, strings.TrimSpace(res.Output))
+}
+
+// StopRootHotspot rolls back transparent NAT rules on the Android device.
+func (h *Helper) StopRootHotspot(serial string, st RootHotspotState) {
+	if serial == "" || !st.Applied {
+		return
+	}
+	_ = h.RunAdb(8*time.Second, serialArgs(serial, "shell", "su", "-c",
+		fmt.Sprintf("sh /data/local/tmp/sharenet_root.sh stop %s %s %s", st.TunIface, st.ApIface, st.DnsServer))...)
+	_ = h.RunAdb(4*time.Second, serialArgs(serial, "shell", "rm", "-f", "/data/local/tmp/sharenet_root.sh")...)
+}

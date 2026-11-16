@@ -10,10 +10,10 @@
 
 ```text
 ПК №1 (Windows, есть интернет)
-  │  USB + ADB + gnirehtet (tun0) + ShareNet_Root_Hotspot.bat
+  │  USB + ADB + gnirehtet (tun0) + ShareNet.exe (автоопределение Root)
   ▼
 Android (Root: Magisk / KernelSU / APatch)
-  │  Прозрачный NAT (iptables MASQUERADE + ip rule + DNS DNAT 1.1.1.1)
+  │  Прозрачный NAT (iptables MASQUERADE + ip rule + DNS DNAT)
   │  Точка доступа Wi-Fi
   ▼
 ПК №2 / Ноутбук (macOS, Windows, любые устройства)

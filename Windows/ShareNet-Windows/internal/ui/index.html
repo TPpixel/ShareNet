@@ -784,6 +784,10 @@
             <span class="row-label">Включать SOCKS5 на телефоне</span>
             <span class="fluent-switch" aria-hidden="true"></span>
           </div>
+          <div id="optRootHotspot" class="row switch-row" role="switch" tabindex="0" aria-checked="true" style="display:none">
+            <span class="row-label">Прозрачный Wi-Fi (Root NAT)</span>
+            <span class="fluent-switch" aria-hidden="true"></span>
+          </div>
         </div>
       </div>
     </div>
@@ -1148,10 +1152,10 @@
       usbStatus.textContent = "Поиск устройства Android...";
     }
 
-    $("usbDeviceName").textContent = st.deviceName || "Не подключён";
+    $("usbDeviceName").textContent = st.deviceName ? (st.isRooted ? (st.deviceName + " · Root") : st.deviceName) : "Не подключён";
     const hs = st.hotspot || {};
     $("usbHotspotVal").textContent = hs.isActive
-      ? (hs.ipAddress ? ("Вкл · " + hs.ipAddress) : "Включена")
+      ? ((hs.ipAddress ? ("Вкл · " + hs.ipAddress) : "Включена") + (st.rootNatActive ? " · NAT" : ""))
       : (st.deviceState === "ready" ? "Выключена" : "—");
 
     const dnsEl = $("dnsInput");
@@ -1162,6 +1166,9 @@
     $("optAutoStart").setAttribute("aria-checked", st.autoStartUsb ? "true" : "false");
     $("optPrivDns").setAttribute("aria-checked", st.disablePrivDns ? "true" : "false");
     $("optProxy").setAttribute("aria-checked", st.startProxy ? "true" : "false");
+    const rootOpt = $("optRootHotspot");
+    rootOpt.style.display = st.isRooted ? "" : "none";
+    rootOpt.setAttribute("aria-checked", st.rootHotspot ? "true" : "false");
 
     const usbBtn = $("usbToggleBtn");
     usbBtn.disabled = !!st.isBusy;
@@ -1300,6 +1307,7 @@
   bindSwitch("optAutoStart", "autoStartUsb");
   bindSwitch("optPrivDns", "disablePrivDns");
   bindSwitch("optProxy", "startProxy");
+  bindSwitch("optRootHotspot", "rootHotspot");
 
   $("usbToggleBtn").addEventListener("click", () => {
     usbRoller.replay();
