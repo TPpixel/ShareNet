@@ -70,6 +70,7 @@ func isExtractedReady(root string) bool {
 		filepath.Join(root, "tools", "platform-tools", "adb.exe"),
 		filepath.Join(root, "tools", "gnirehtet", "gnirehtet.exe"),
 		filepath.Join(root, "tools", "sing-box", "sing-box.exe"),
+		filepath.Join(root, "tools", "sing-box", "sing-box-android"),
 	}
 	for _, p := range required {
 		st, err := os.Stat(p)

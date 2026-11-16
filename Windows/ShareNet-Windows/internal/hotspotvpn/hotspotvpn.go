@@ -1,6 +1,7 @@
 package hotspotvpn
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -74,6 +76,8 @@ type Manager struct {
 	singBoxPath string
 	tunConfig   string
 	tunLogPath  string
+	tunPidPath  string
+	tunPid      int
 	gateway     string
 	manualGW    string
 	adapterName string
@@ -127,6 +131,7 @@ func NewManagerWithRoot(customRoot string, logFn func(string)) *Manager {
 		singBoxPath: sbPath,
 		tunConfig:   filepath.Join(stateDir, "sharenet-singbox.json"),
 		tunLogPath:  filepath.Join(stateDir, "sharenet-singbox.log"),
+		tunPidPath:  filepath.Join(stateDir, "sharenet-singbox.pid"),
 		mode:        mode,
 		logFn:       logFn,
 	}
@@ -471,6 +476,7 @@ func (m *Manager) startTunVPN(gw string) error {
 	}
 
 	m.emitLog("Запуск системного VPN (TUN) на %s:%d (подтвердите UAC)...", gw, ProxyPort)
+	beforePids := listSingBoxPIDs()
 	args := fmt.Sprintf(`run -c "%s"`, m.tunConfig)
 	if err := runElevated(m.singBoxPath, args, filepath.Dir(m.singBoxPath)); err != nil {
 		m.emitLog("Запуск TUN с правами администратора отменён: %v", err)
@@ -481,7 +487,21 @@ func (m *Manager) startTunVPN(gw string) error {
 	for i := 0; i < 12; i++ {
 		time.Sleep(350 * time.Millisecond)
 		m.TailTunLog()
-		if m.IsSingBoxRunning() {
+		afterPids := listSingBoxPIDs()
+		var newPid int
+		for pid := range afterPids {
+			if !beforePids[pid] {
+				newPid = pid
+				break
+			}
+		}
+		if newPid == 0 && len(afterPids) == 1 && len(beforePids) == 0 {
+			for pid := range afterPids {
+				newPid = pid
+			}
+		}
+		if newPid > 0 {
+			m.setTrackedTunPID(newPid)
 			started = true
 			break
 		}
@@ -582,31 +602,112 @@ func (m *Manager) restoreWindowsProxy() {
 	notifyWinINetSettings()
 }
 
-func (m *Manager) stopTunProcess() error {
-	if !m.IsSingBoxRunning() {
+func parseTasklistPIDs(csvOut string) map[int]bool {
+	pids := make(map[int]bool)
+	r := csv.NewReader(strings.NewReader(csvOut))
+	r.FieldsPerRecord = -1
+	for {
+		rec, err := r.Read()
+		if err != nil {
+			break
+		}
+		if len(rec) < 2 {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(rec[0]), "sing-box.exe") {
+			continue
+		}
+		if pid, convErr := strconv.Atoi(strings.TrimSpace(rec[1])); convErr == nil && pid > 0 {
+			pids[pid] = true
+		}
+	}
+	return pids
+}
+
+func listSingBoxPIDs() map[int]bool {
+	cmd := exec.Command("tasklist.exe", "/FI", "IMAGENAME eq sing-box.exe", "/FO", "CSV", "/NH")
+	netutil.HideWindow(cmd)
+	out, err := cmd.Output()
+	if err != nil {
 		return nil
 	}
-	cmd := exec.Command("taskkill.exe", "/F", "/IM", "sing-box.exe")
+	return parseTasklistPIDs(string(out))
+}
+
+func (m *Manager) getTrackedTunPID() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.tunPid > 0 {
+		return m.tunPid
+	}
+	if m.tunPidPath == "" {
+		return 0
+	}
+	data, err := os.ReadFile(m.tunPidPath)
+	if err != nil {
+		return 0
+	}
+	if pid, convErr := strconv.Atoi(strings.TrimSpace(string(data))); convErr == nil && pid > 0 {
+		m.tunPid = pid
+		return pid
+	}
+	return 0
+}
+
+func (m *Manager) setTrackedTunPID(pid int) {
+	m.mu.Lock()
+	m.tunPid = pid
+	pidPath := m.tunPidPath
+	m.mu.Unlock()
+	if pidPath != "" && pid > 0 {
+		_ = os.WriteFile(pidPath, []byte(strconv.Itoa(pid)), 0o600)
+	}
+}
+
+func (m *Manager) clearTrackedTunPID() {
+	m.mu.Lock()
+	m.tunPid = 0
+	pidPath := m.tunPidPath
+	m.mu.Unlock()
+	if pidPath != "" {
+		_ = os.Remove(pidPath)
+	}
+}
+
+func (m *Manager) stopTunProcess() error {
+	pid := m.getTrackedTunPID()
+	if pid <= 0 {
+		return nil
+	}
+	if !listSingBoxPIDs()[pid] {
+		m.clearTrackedTunPID()
+		return nil
+	}
+	cmd := exec.Command("taskkill.exe", "/F", "/PID", strconv.Itoa(pid), "/T")
 	netutil.HideWindow(cmd)
-	if err := cmd.Run(); err != nil && m.IsSingBoxRunning() {
-		if err := runElevated("taskkill.exe", "/F /IM sing-box.exe", m.appRoot); err != nil {
+	if err := cmd.Run(); err != nil && listSingBoxPIDs()[pid] {
+		if err := runElevated("taskkill.exe", fmt.Sprintf("/F /PID %d /T", pid), m.appRoot); err != nil {
 			return err
 		}
-		for i := 0; i < 8 && m.IsSingBoxRunning(); i++ {
+		for i := 0; i < 8 && listSingBoxPIDs()[pid]; i++ {
 			time.Sleep(250 * time.Millisecond)
 		}
 	}
+	m.clearTrackedTunPID()
 	return nil
 }
 
 func (m *Manager) IsSingBoxRunning() bool {
-	cmd := exec.Command("tasklist.exe", "/FI", "IMAGENAME eq sing-box.exe", "/NH")
-	netutil.HideWindow(cmd)
-	out, err := cmd.Output()
-	if err != nil {
+	pid := m.getTrackedTunPID()
+	if pid <= 0 {
 		return false
 	}
-	return strings.Contains(strings.ToLower(string(out)), "sing-box.exe")
+	pids := listSingBoxPIDs()
+	if pids[pid] {
+		return true
+	}
+	m.clearTrackedTunPID()
+	return false
 }
 
 func BuildSingBoxConfig(gateway string, port int, logPath string) ([]byte, error) {

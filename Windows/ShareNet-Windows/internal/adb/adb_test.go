@@ -1,6 +1,9 @@
 package adb
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseDevicesOutput(t *testing.T) {
 	raw := `List of devices attached
@@ -53,5 +56,53 @@ func TestPrimaryDnsIP(t *testing.T) {
 	}
 	if got := PrimaryDnsIP("invalid"); got != "1.1.1.1" {
 		t.Fatalf("got %q, want 1.1.1.1 fallback", got)
+	}
+}
+
+func TestMiniShareConfigsAndUUID(t *testing.T) {
+	u1 := GenerateUUIDv4()
+	u2 := GenerateUUIDv4()
+	if len(u1) != 36 || u1 == u2 {
+		t.Fatalf("expected unique 36-char UUIDv4s, got %q and %q", u1, u2)
+	}
+	srv := BuildMiniShareServerJSON(u1, 10808)
+	for _, want := range []string{u1, `"127.0.0.1"`, `"vless"`, `"warn"`, `"127.0.0.0/8"`, `"198.18.0.0/15"`, `"ip_is_private": true`, `"reject"`, `"resolve"`} {
+		if !strings.Contains(srv, want) {
+			t.Fatalf("unexpected server config (missing %s): %s", want, srv)
+		}
+	}
+	srvWithLanDns := BuildMiniShareServerJSON(u1, 10808, "192.168.1.1")
+	if !strings.Contains(srvWithLanDns, `"192.168.1.1/32"`) {
+		t.Fatalf("expected private router DNS allow rule on port 53: %s", srvWithLanDns)
+	}
+	srvLoopbackDns := BuildMiniShareServerJSON(u1, 10808, "127.0.0.1")
+	if strings.Contains(srvLoopbackDns, `"127.0.0.1/32"`) {
+		t.Fatalf("loopback DNS must never be exempted from server SSRF reject rules: %s", srvLoopbackDns)
+	}
+	cli := BuildMiniShareClientJSON(u1, 10808, 1053, "192.168.1.1:1.1.1.1")
+	for _, want := range []string{u1, `"1.1.1.1"`, `"xudp"`, `"mtu": 1500`, `"gvisor"`, `"warn"`, `"198.18.0.0/15"`, `"reject"`} {
+		if !strings.Contains(cli, want) {
+			t.Fatalf("unexpected client config (missing %s): %s", want, cli)
+		}
+	}
+	if strings.Contains(cli, `"outbound": "direct"`) {
+		t.Fatalf("client config must not route private IPs to direct: %s", cli)
+	}
+}
+
+func TestMiniShareIfaceValidation(t *testing.T) {
+	for _, valid := range []string{"ap0", "swlan0", "wlan2", "rndis0", "wlan0.ap"} {
+		if !IsValidIfaceName(valid) {
+			t.Fatalf("expected %q to be valid iface", valid)
+		}
+	}
+	for _, bad := range []string{"", "ap0; id", "ap0 && rm -rf /", "../ap0", "ap0$(id)", "iface_name_exceeding_thirty_two_chars"} {
+		if IsValidIfaceName(bad) {
+			t.Fatalf("expected %q to be rejected as invalid iface", bad)
+		}
+	}
+	h := NewHelper()
+	if _, err := h.StartMiniShare("SERIAL123", GenerateUUIDv4(), "ap0;id", "1.1.1.1", 10808); err == nil || !strings.Contains(err.Error(), "недопустимое имя интерфейса") {
+		t.Fatalf("expected StartMiniShare to reject unsafe interface name, got err=%v", err)
 	}
 }

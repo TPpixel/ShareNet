@@ -3,7 +3,13 @@ package adb
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,7 +22,7 @@ import (
 )
 
 const (
-	TargetHotspotProxyVersionCode = 33
+	TargetHotspotProxyVersionCode = 36
 	TargetUsbNetVersionCode       = 12
 )
 
@@ -47,10 +53,13 @@ type Helper struct {
 	AppRoot                 string
 	BundledPlatformToolsDir string
 	GnirehtetDir            string
+	SingBoxDir              string
 	AdbExePath              string
 	GnirehtetExePath        string
 	GnirehtetApkPath        string
 	HotspotProxyApkPath     string
+	SingBoxExePath          string
+	SingBoxAndroidPath      string
 }
 
 var (
@@ -58,7 +67,13 @@ var (
 	reTethered    = regexp.MustCompile(`(?m)^\s*([a-zA-Z0-9_.-]+)\s*-\s*TetheredState`)
 	reIfaceHdr    = regexp.MustCompile(`^\d+:\s+([^:@\s]+)`)
 	reInet4       = regexp.MustCompile(`\binet\s+(\d+\.\d+\.\d+\.\d+)/\d+`)
+	reValidIface  = regexp.MustCompile(`^[a-zA-Z0-9_.-]{1,32}$`)
 )
+
+// IsValidIfaceName checks whether iface is a safe Android network interface name.
+func IsValidIfaceName(iface string) bool {
+	return reValidIface.MatchString(strings.TrimSpace(iface))
+}
 
 func NewHelper() *Helper {
 	return NewHelperWithRoot("")
@@ -89,14 +104,18 @@ func NewHelperWithRoot(customRoot string) *Helper {
 		}
 	}
 
+	sbDir := filepath.Join(appRoot, "tools", "sing-box")
 	return &Helper{
 		AppRoot:                 appRoot,
 		BundledPlatformToolsDir: bundledPt,
 		GnirehtetDir:            gnDir,
+		SingBoxDir:              sbDir,
 		AdbExePath:              adbPath,
 		GnirehtetExePath:        filepath.Join(gnDir, "gnirehtet.exe"),
 		GnirehtetApkPath:        filepath.Join(gnDir, "gnirehtet.apk"),
 		HotspotProxyApkPath:     filepath.Join(appRoot, "tools", "hotspot-proxy", "hotspot-proxy.apk"),
+		SingBoxExePath:          filepath.Join(sbDir, "sing-box.exe"),
+		SingBoxAndroidPath:      filepath.Join(sbDir, "sing-box-android"),
 	}
 }
 
@@ -412,13 +431,25 @@ type RootHotspotState struct {
 	DnsServer string `json:"dnsServer"`
 }
 
-// CheckRootAccess checks whether ADB shell can obtain uid=0 via su (Magisk / KernelSU / APatch).
-func (h *Helper) CheckRootAccess(serial string) bool {
+// CheckRootStatus returns "rooted" if su grants uid=0, "denied" if su exists without permission, or "none".
+func (h *Helper) CheckRootStatus(serial string) string {
 	if serial == "" {
-		return false
+		return "none"
 	}
 	res := h.RunAdb(4*time.Second, serialArgs(serial, "shell", "su", "-c", "id")...)
-	return strings.Contains(res.Output, "uid=0(")
+	if strings.Contains(res.Output, "uid=0(") {
+		return "rooted"
+	}
+	whichRes := h.RunAdb(3*time.Second, serialArgs(serial, "shell", "which su || ls /debug_ramdisk/su /sbin/su /system_ext/bin/su /system/xbin/su 2>/dev/null")...)
+	if strings.Contains(whichRes.Output, "/su") {
+		return "denied"
+	}
+	return "none"
+}
+
+// CheckRootAccess checks whether ADB shell can obtain uid=0 via su (Magisk / KernelSU / APatch).
+func (h *Helper) CheckRootAccess(serial string) bool {
+	return h.CheckRootStatus(serial) == "rooted"
 }
 
 // PrimaryDnsIP extracts the best IPv4 DNS server for transparent DNAT on the phone.
@@ -459,126 +490,477 @@ func isSimpleIPv4(s string) bool {
 	return true
 }
 
-const rootHotspotScript = `#!/system/bin/sh
-find_tun() {
-  ip -o -4 addr show 2>/dev/null | while read -r _ iface _ cidr _; do
-    case "$iface" in
-      tun*) echo "$iface"; return 0 ;;
-    esac
-  done
+const (
+	MiniShareRemoteDir = "/data/local/tmp/sharenet-root"
+	MiniShareDnsPort   = 1053
+)
+
+// GenerateUUIDv4 returns a random RFC 4122 v4 UUID string.
+func GenerateUUIDv4() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
-find_ap() {
-  ip -o -4 addr show 2>/dev/null | while read -r _ iface _ cidr _; do
-    case "$iface" in
-      ap*|swlan*|softap*|wlan1*|wlan2*|rndis*|usb*|ncm*)
-        echo "$iface $cidr"; return 0 ;;
-      wlan0)
-        case "$cidr" in
-          192.168.43.*|192.168.137.*) echo "$iface $cidr"; return 0 ;;
-        esac ;;
-    esac
-  done
+
+func isSafePrivateDnsIP(s string) bool {
+	ip := net.ParseIP(strings.TrimSpace(s)).To4()
+	if ip == nil {
+		return false
+	}
+	return ip.IsPrivate() && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() && !ip.IsUnspecified()
 }
+
+var miniShareForbiddenCIDRs = []string{
+	"0.0.0.0/8",
+	"127.0.0.0/8",
+	"100.64.0.0/10",
+	"169.254.0.0/16",
+	"192.0.0.0/24",
+	"192.0.2.0/24",
+	"198.18.0.0/15",
+	"198.51.100.0/24",
+	"203.0.113.0/24",
+	"224.0.0.0/4",
+	"240.0.0.0/4",
+	"::/128",
+	"::1/128",
+	"fc00::/7",
+	"fe80::/10",
+	"ff00::/8",
+}
+
+// BuildMiniShareServerJSON builds the Windows sing-box VLESS server config (bound strictly to 127.0.0.1)
+// and rejects loopback, link-local, and RFC1918 LAN targets to prevent SSRF from hotspot clients.
+func BuildMiniShareServerJSON(uuid string, listenPort int, allowedDns ...string) string {
+	routeRules := []map[string]interface{}{
+		{"action": "resolve"},
+	}
+	if len(allowedDns) > 0 {
+		dnsIP := PrimaryDnsIP(allowedDns[0])
+		if isSafePrivateDnsIP(dnsIP) {
+			routeRules = append(routeRules, map[string]interface{}{
+				"ip_cidr":  []string{dnsIP + "/32"},
+				"network":  []string{"tcp", "udp"},
+				"port":     []int{53},
+				"outbound": "direct",
+			})
+		}
+	}
+	routeRules = append(routeRules,
+		map[string]interface{}{
+			"ip_cidr": miniShareForbiddenCIDRs,
+			"action":  "reject",
+		},
+		map[string]interface{}{
+			"ip_is_private": true,
+			"action":        "reject",
+		},
+	)
+
+	cfg := map[string]interface{}{
+		"log": map[string]interface{}{
+			"level":     "warn",
+			"timestamp": true,
+		},
+		"dns": map[string]interface{}{
+			"servers": []map[string]interface{}{
+				{
+					"type": "local",
+					"tag":  "dns-guard",
+				},
+			},
+		},
+		"inbounds": []map[string]interface{}{
+			{
+				"type":        "vless",
+				"tag":         "vless-in",
+				"listen":      "127.0.0.1",
+				"listen_port": listenPort,
+				"users": []map[string]interface{}{
+					{"uuid": uuid},
+				},
+			},
+		},
+		"outbounds": []map[string]interface{}{
+			{
+				"type": "direct",
+				"tag":  "direct",
+			},
+		},
+		"route": map[string]interface{}{
+			"default_domain_resolver": "dns-guard",
+			"rules":                   routeRules,
+			"final":                   "direct",
+		},
+	}
+	raw, _ := json.MarshalIndent(cfg, "", "  ")
+	return string(raw) + "\n"
+}
+
+// BuildMiniShareClientJSON builds the Android sing-box client config (tun0 + DNS hijack over VLESS xudp).
+func BuildMiniShareClientJSON(uuid string, serverPort, dnsPort int, dnsServer string) string {
+	dnsIP := PrimaryDnsIP(dnsServer)
+	cfg := map[string]interface{}{
+		"log": map[string]interface{}{
+			"level":     "warn",
+			"timestamp": true,
+		},
+		"dns": map[string]interface{}{
+			"servers": []map[string]interface{}{
+				{
+					"type":   "tcp",
+					"tag":    "remote-dns",
+					"server": dnsIP,
+					"detour": "proxy",
+				},
+			},
+			"final": "remote-dns",
+		},
+		"inbounds": []map[string]interface{}{
+			{
+				"type":           "tun",
+				"tag":            "tun0-in",
+				"interface_name": "tun0",
+				"stack":          "gvisor",
+				"address":        []string{"172.19.0.1/30"},
+				"mtu":            1500,
+				"auto_route":     false,
+			},
+			{
+				"type":        "direct",
+				"tag":         "dns-in",
+				"listen":      "0.0.0.0",
+				"listen_port": dnsPort,
+			},
+		},
+		"outbounds": []map[string]interface{}{
+			{
+				"type":            "vless",
+				"tag":             "proxy",
+				"server":          "127.0.0.1",
+				"server_port":     serverPort,
+				"uuid":            uuid,
+				"packet_encoding": "xudp",
+			},
+			{
+				"type": "direct",
+				"tag":  "direct",
+			},
+		},
+		"route": map[string]interface{}{
+			"rules": []map[string]interface{}{
+				{"action": "sniff"},
+				{"inbound": "dns-in", "action": "hijack-dns"},
+				{"protocol": "dns", "action": "hijack-dns"},
+				{"ip_cidr": miniShareForbiddenCIDRs, "action": "reject"},
+				{"ip_is_private": true, "action": "reject"},
+			},
+			"final": "proxy",
+		},
+	}
+	raw, _ := json.MarshalIndent(cfg, "", "  ")
+	return string(raw) + "\n"
+}
+
+const miniShareScript = `#!/system/bin/sh
+BASE_DIR="/data/local/tmp/sharenet-root"
+SINGBOX="$BASE_DIR/sing-box"
+CONFIG="$BASE_DIR/client.json"
+PIDFILE="$BASE_DIR/singbox.pid"
+LOGFILE="$BASE_DIR/singbox.log"
+STATEFILE="$BASE_DIR/hotspot.iface"
+TUN_IF="tun0"
+ROUTE_TABLE="100"
+RULE_PREF_HOTSPOT="9000"
+DNS_PORT="1053"
+
+is_valid_iface() {
+  case "$1" in
+    ""|*[!a-zA-Z0-9_.-]*) return 1 ;;
+  esac
+  [ "${#1}" -le 32 ]
+}
+
+detect_hotspot_iface() {
+  for iface in ap0 wlan1 wlan2 swlan0 softap0 rndis0 ncm0 usb0; do
+    if ip link show "$iface" >/dev/null 2>&1; then
+      if ip -4 addr show dev "$iface" 2>/dev/null | grep -q "inet "; then
+        echo "$iface"
+        return 0
+      fi
+    fi
+  done
+  return 1
+}
+
 ipt_fwd_est_add() {
   iptables -w -I FORWARD 1 -i "$1" -o "$2" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || \
   iptables -w -I FORWARD 1 -i "$1" -o "$2" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null
 }
+
 ipt_fwd_est_del() {
   iptables -w -D FORWARD -i "$1" -o "$2" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null
   iptables -w -D FORWARD -i "$1" -o "$2" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null
 }
+
+stop_rules_for_iface() {
+  _IF="$1"
+  is_valid_iface "$_IF" || return
+  iptables -w -t nat -D PREROUTING -i "$_IF" -p udp --dport 53 -j REDIRECT --to-ports "$DNS_PORT" 2>/dev/null
+  iptables -w -t nat -D PREROUTING -i "$_IF" -p tcp --dport 53 -j REDIRECT --to-ports "$DNS_PORT" 2>/dev/null
+  iptables -w -D INPUT -i "$_IF" -p udp --dport "$DNS_PORT" -j ACCEPT 2>/dev/null
+  iptables -w -D INPUT -i "$_IF" -p tcp --dport "$DNS_PORT" -j ACCEPT 2>/dev/null
+  iptables -w -D INPUT ! -i "$_IF" -p udp --dport "$DNS_PORT" -j DROP 2>/dev/null
+  iptables -w -D INPUT ! -i "$_IF" -p tcp --dport "$DNS_PORT" -j DROP 2>/dev/null
+  iptables -w -D FORWARD -i "$_IF" -o "$TUN_IF" -j ACCEPT 2>/dev/null
+  ipt_fwd_est_del "$TUN_IF" "$_IF"
+}
+
+stop_all() {
+  if [ -f "$STATEFILE" ]; then
+    OLD_IF=$(cat "$STATEFILE" 2>/dev/null)
+    stop_rules_for_iface "$OLD_IF"
+  fi
+  for _f in ap0 wlan1 wlan2 swlan0 softap0 rndis0 ncm0 usb0; do
+    stop_rules_for_iface "$_f"
+  done
+  while ip rule del pref "$RULE_PREF_HOTSPOT" 2>/dev/null; do :; done
+  iptables -w -t nat -D POSTROUTING -o "$TUN_IF" -j MASQUERADE 2>/dev/null
+  ip route flush table "$ROUTE_TABLE" 2>/dev/null
+  if [ -f "$PIDFILE" ]; then
+    _PID=$(cat "$PIDFILE" 2>/dev/null)
+    case "$_PID" in
+      ""|*[!0-9]*) _PID="" ;;
+    esac
+    if [ -n "$_PID" ] && tr '\0' ' ' < "/proc/$_PID/cmdline" 2>/dev/null | grep -Fq "$SINGBOX"; then
+      kill "$_PID" 2>/dev/null
+      sleep 0.2 2>/dev/null || true
+      kill -9 "$_PID" 2>/dev/null
+    fi
+    rm -f "$PIDFILE"
+  fi
+  pkill -f "$SINGBOX" 2>/dev/null || true
+  rm -f "$STATEFILE"
+}
+
+cleanup_sensitive() {
+  rm -f "$CONFIG" "$LOGFILE" "$PIDFILE" "$STATEFILE"
+}
+
 case "$1" in
   start)
-    DNS="$2"
-    [ -z "$DNS" ] && DNS="1.1.1.1"
-    TUN=$(find_tun)
-    if [ -z "$TUN" ]; then
-      echo "ERR:NO_TUN"
-      exit 2
+    if [ -n "$2" ]; then
+      if ! is_valid_iface "$2"; then
+        echo "ERR:BAD_IFACE"
+        exit 3
+      fi
+      HOTSPOT_IF="$2"
+    else
+      HOTSPOT_IF=$(detect_hotspot_iface)
     fi
-    AP_INFO=$(find_ap)
-    if [ -z "$AP_INFO" ]; then
+    if [ -z "$HOTSPOT_IF" ]; then
       echo "ERR:NO_AP"
       exit 3
     fi
-    AP=$(echo "$AP_INFO" | awk '{print $1}')
-    CIDR=$(echo "$AP_INFO" | awk '{print $2}')
-    SUBNET=$(ip -o -4 route show dev "$AP" proto kernel 2>/dev/null | while read -r net _; do echo "$net"; break; done)
-    [ -z "$SUBNET" ] && SUBNET="$CIDR"
+    stop_all
+    if [ ! -x "$SINGBOX" ]; then
+      echo "ERR:NO_SINGBOX"
+      cleanup_sensitive
+      exit 4
+    fi
+    if [ ! -f "$CONFIG" ]; then
+      echo "ERR:NO_CONFIG"
+      cleanup_sensitive
+      exit 5
+    fi
+    chmod 700 "$BASE_DIR" "$SINGBOX" "$BASE_DIR/share.sh" 2>/dev/null || true
+    chmod 600 "$CONFIG" 2>/dev/null || true
+    echo "$HOTSPOT_IF" > "$STATEFILE"
+    chmod 600 "$STATEFILE" 2>/dev/null || true
+    nohup "$SINGBOX" run -c "$CONFIG" >"$LOGFILE" 2>&1 </dev/null &
+    SB_PID=$!
+    echo "$SB_PID" > "$PIDFILE"
+    chmod 600 "$PIDFILE" "$LOGFILE" 2>/dev/null || true
+
+    WAIT_COUNT=0
+    TUN_READY=0
+    while [ "$WAIT_COUNT" -lt 24 ]; do
+      if ! kill -0 "$SB_PID" 2>/dev/null; then
+        LAST_ERR=$(tail -n 5 "$LOGFILE" 2>/dev/null | tr '\n' ' ')
+        echo "ERR:SINGBOX_EXITED:$LAST_ERR"
+        stop_all
+        cleanup_sensitive
+        exit 6
+      fi
+      if ip -o link show up 2>/dev/null | grep -q " $TUN_IF[:@]"; then
+        TUN_READY=1
+        break
+      fi
+      WAIT_COUNT=$((WAIT_COUNT + 1))
+      sleep 0.4 2>/dev/null || sleep 1
+    done
+    if [ "$TUN_READY" -ne 1 ]; then
+      echo "ERR:NO_TUN"
+      stop_all
+      cleanup_sensitive
+      exit 2
+    fi
+
     sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1
     sysctl -w net.ipv4.conf.all.rp_filter=0 >/dev/null 2>&1
-    sysctl -w net.ipv4.conf."$TUN".rp_filter=0 >/dev/null 2>&1
-    sysctl -w net.ipv4.conf."$AP".rp_filter=0 >/dev/null 2>&1
-    while ip rule del pref 100 2>/dev/null; do :; done
-    ip route flush table 999 2>/dev/null
-    ip route replace "$SUBNET" dev "$AP" table 999
-    ip route replace default dev "$TUN" table 999
-    ip rule add from "$SUBNET" lookup 999 pref 100
-    ip rule add to "$SUBNET" lookup 999 pref 100
-    ip rule add iif "$AP" lookup 999 pref 100
-    iptables -w -D FORWARD -i "$AP" -o "$TUN" -j ACCEPT 2>/dev/null
-    ipt_fwd_est_del "$TUN" "$AP"
-    iptables -w -I FORWARD 1 -i "$AP" -o "$TUN" -j ACCEPT
-    ipt_fwd_est_add "$TUN" "$AP"
-    iptables -w -t nat -D POSTROUTING -o "$TUN" -j MASQUERADE 2>/dev/null
-    iptables -w -t nat -I POSTROUTING 1 -o "$TUN" -j MASQUERADE
-    iptables -w -t nat -D PREROUTING -i "$AP" -p udp --dport 53 -j DNAT --to-destination "$DNS":53 2>/dev/null
-    iptables -w -t nat -D PREROUTING -i "$AP" -p tcp --dport 53 -j DNAT --to-destination "$DNS":53 2>/dev/null
-    iptables -w -t nat -I PREROUTING 1 -i "$AP" -p udp --dport 53 -j DNAT --to-destination "$DNS":53
-    iptables -w -t nat -I PREROUTING 1 -i "$AP" -p tcp --dport 53 -j DNAT --to-destination "$DNS":53
-    iptables -w -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null
-    iptables -w -t mangle -I FORWARD 1 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
-    echo "OK:$TUN:$AP"
+    sysctl -w "net.ipv4.conf.$HOTSPOT_IF.rp_filter=0" >/dev/null 2>&1
+    sysctl -w "net.ipv4.conf.$TUN_IF.rp_filter=0" >/dev/null 2>&1
+
+    ip route flush table "$ROUTE_TABLE" 2>/dev/null
+    ip route replace default dev "$TUN_IF" table "$ROUTE_TABLE" || { echo "ERR:ROUTE_TUN_FAIL"; stop_all; cleanup_sensitive; exit 7; }
+    HOTSPOT_SUBNET=$(ip -4 route show dev "$HOTSPOT_IF" proto kernel 2>/dev/null | awk 'NR==1{print $1}')
+    if [ -n "$HOTSPOT_SUBNET" ]; then
+      ip route replace "$HOTSPOT_SUBNET" dev "$HOTSPOT_IF" table "$ROUTE_TABLE"
+    fi
+
+    while ip rule del pref "$RULE_PREF_HOTSPOT" 2>/dev/null; do :; done
+    ip rule add pref "$RULE_PREF_HOTSPOT" iif "$HOTSPOT_IF" lookup "$ROUTE_TABLE" || { echo "ERR:RULE_FAIL"; stop_all; cleanup_sensitive; exit 8; }
+
+    iptables -w -I FORWARD 1 -i "$HOTSPOT_IF" -o "$TUN_IF" -j ACCEPT
+    ipt_fwd_est_add "$TUN_IF" "$HOTSPOT_IF"
+    iptables -w -t nat -I POSTROUTING 1 -o "$TUN_IF" -j MASQUERADE
+    iptables -w -I INPUT 1 ! -i "$HOTSPOT_IF" -p udp --dport "$DNS_PORT" -j DROP 2>/dev/null || true
+    iptables -w -I INPUT 1 ! -i "$HOTSPOT_IF" -p tcp --dport "$DNS_PORT" -j DROP 2>/dev/null || true
+    iptables -w -I INPUT 1 -i "$HOTSPOT_IF" -p udp --dport "$DNS_PORT" -j ACCEPT
+    iptables -w -I INPUT 1 -i "$HOTSPOT_IF" -p tcp --dport "$DNS_PORT" -j ACCEPT
+    iptables -w -t nat -I PREROUTING 1 -i "$HOTSPOT_IF" -p udp --dport 53 -j REDIRECT --to-ports "$DNS_PORT"
+    iptables -w -t nat -I PREROUTING 1 -i "$HOTSPOT_IF" -p tcp --dport 53 -j REDIRECT --to-ports "$DNS_PORT"
+    echo "OK:$TUN_IF:$HOTSPOT_IF"
     ;;
   stop)
-    TUN="$2"
-    AP="$3"
-    DNS="$4"
-    [ -z "$DNS" ] && DNS="1.1.1.1"
-    while ip rule del pref 100 2>/dev/null; do :; done
-    ip route flush table 999 2>/dev/null
-    if [ -n "$AP" ] && [ -n "$TUN" ]; then
-      iptables -w -D FORWARD -i "$AP" -o "$TUN" -j ACCEPT 2>/dev/null
-      ipt_fwd_est_del "$TUN" "$AP"
-      iptables -w -t nat -D POSTROUTING -o "$TUN" -j MASQUERADE 2>/dev/null
-      iptables -w -t nat -D PREROUTING -i "$AP" -p udp --dport 53 -j DNAT --to-destination "$DNS":53 2>/dev/null
-      iptables -w -t nat -D PREROUTING -i "$AP" -p tcp --dport 53 -j DNAT --to-destination "$DNS":53 2>/dev/null
+    stop_all
+    cleanup_sensitive
+    echo "STOPPED"
+    ;;
+  status)
+    if [ -f "$PIDFILE" ]; then
+      _PID=$(cat "$PIDFILE" 2>/dev/null)
+      if [ -n "$_PID" ] && kill -0 "$_PID" 2>/dev/null; then
+        if ip route show table "$ROUTE_TABLE" 2>/dev/null | grep -q "^default dev $TUN_IF"; then
+          echo "HEALTHY"
+          exit 0
+        fi
+      fi
     fi
-    iptables -w -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null
+    echo "DOWN"
+    exit 1
     ;;
 esac
 `
 
-func (h *Helper) ensureRootScript(serial string) error {
-	tmpFile, err := os.CreateTemp("", "sharenet_root_*.sh")
+func writeTempLF(prefix, content string) (string, error) {
+	f, err := os.CreateTemp("", prefix)
 	if err != nil {
-		return err
+		return "", err
 	}
-	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
-	_, wErr := tmpFile.WriteString(rootHotspotScript)
-	cErr := tmpFile.Close()
+	p := f.Name()
+	clean := strings.ReplaceAll(content, "\r\n", "\n")
+	_, wErr := f.WriteString(clean)
+	cErr := f.Close()
 	if wErr != nil {
-		return wErr
+		_ = os.Remove(p)
+		return "", wErr
 	}
 	if cErr != nil {
-		return cErr
+		_ = os.Remove(p)
+		return "", cErr
 	}
-	res := h.RunAdb(10*time.Second, serialArgs(serial, "push", tmpPath, "/data/local/tmp/sharenet_root.sh")...)
-	if res.ExitCode != 0 {
-		return fmt.Errorf("adb push root script failed: %s", res.Output)
-	}
-	_ = h.RunAdb(5*time.Second, serialArgs(serial, "shell", "chmod", "755", "/data/local/tmp/sharenet_root.sh")...)
-	return nil
+	return p, nil
 }
 
-// StartRootHotspot configures transparent NAT routing from the Android Wi-Fi hotspot to tun0.
-func (h *Helper) StartRootHotspot(serial, dnsCsv string) (RootHotspotState, error) {
-	if err := h.ensureRootScript(serial); err != nil {
+func fileSHA256Hex(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func parseRemoteSha256(out string) string {
+	for _, line := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) > 0 && len(fields[0]) == 64 {
+			if _, err := hex.DecodeString(fields[0]); err == nil {
+				return strings.ToLower(fields[0])
+			}
+		}
+	}
+	return ""
+}
+
+// StartMiniShare deploys sing-box + client.json + share.sh to /data/local/tmp/sharenet-root and starts the root router.
+func (h *Helper) StartMiniShare(serial, uuid, hotspotIface, dnsCsv string, port int) (RootHotspotState, error) {
+	iface := strings.TrimSpace(hotspotIface)
+	if iface != "" && !IsValidIfaceName(iface) {
+		return RootHotspotState{}, fmt.Errorf("недопустимое имя интерфейса точки доступа: %q", iface)
+	}
+	if !fileExists(h.SingBoxAndroidPath) {
+		return RootHotspotState{}, fmt.Errorf("не найден Android sing-box: %s", h.SingBoxAndroidPath)
+	}
+	expectedHash, err := fileSHA256Hex(h.SingBoxAndroidPath)
+	if err != nil {
 		return RootHotspotState{}, err
 	}
+
+	_ = h.RunAdb(5*time.Second, serialArgs(serial, "shell", "mkdir", "-p", MiniShareRemoteDir)...)
+	_ = h.RunAdb(5*time.Second, serialArgs(serial, "shell", "chmod", "700", MiniShareRemoteDir)...)
+
+	hashRes := h.RunAdb(6*time.Second, serialArgs(serial, "shell",
+		fmt.Sprintf("sha256sum %s/sing-box 2>/dev/null || true", MiniShareRemoteDir))...)
+	if parseRemoteSha256(hashRes.Output) != expectedHash {
+		pushRes := h.RunAdb(60*time.Second, serialArgs(serial, "push", h.SingBoxAndroidPath, MiniShareRemoteDir+"/sing-box")...)
+		if pushRes.ExitCode != 0 {
+			return RootHotspotState{}, fmt.Errorf("ошибка отправки sing-box на телефон: %s", pushRes.Output)
+		}
+		verifyRes := h.RunAdb(6*time.Second, serialArgs(serial, "shell",
+			fmt.Sprintf("sha256sum %s/sing-box 2>/dev/null || true", MiniShareRemoteDir))...)
+		if remoteHash := parseRemoteSha256(verifyRes.Output); remoteHash != "" && remoteHash != expectedHash {
+			return RootHotspotState{}, fmt.Errorf("ошибка проверки контрольной суммы sing-box на телефоне")
+		}
+	}
+
 	dnsIP := PrimaryDnsIP(dnsCsv)
-	res := h.RunAdb(10*time.Second, serialArgs(serial, "shell", "su", "-c", "sh /data/local/tmp/sharenet_root.sh start "+dnsIP)...)
+	clientPath, err := writeTempLF("sharenet_client_*.json", BuildMiniShareClientJSON(uuid, port, MiniShareDnsPort, dnsIP))
+	if err != nil {
+		return RootHotspotState{}, err
+	}
+	defer os.Remove(clientPath)
+	if res := h.RunAdb(10*time.Second, serialArgs(serial, "push", clientPath, MiniShareRemoteDir+"/client.json")...); res.ExitCode != 0 {
+		return RootHotspotState{}, fmt.Errorf("ошибка отправки client.json: %s", res.Output)
+	}
+
+	scriptPath, err := writeTempLF("sharenet_share_*.sh", miniShareScript)
+	if err != nil {
+		return RootHotspotState{}, err
+	}
+	defer os.Remove(scriptPath)
+	if res := h.RunAdb(10*time.Second, serialArgs(serial, "push", scriptPath, MiniShareRemoteDir+"/share.sh")...); res.ExitCode != 0 {
+		return RootHotspotState{}, fmt.Errorf("ошибка отправки share.sh: %s", res.Output)
+	}
+
+	_ = h.RunAdb(5*time.Second, serialArgs(serial, "shell", "chmod", "700",
+		MiniShareRemoteDir+"/sing-box", MiniShareRemoteDir+"/share.sh")...)
+	_ = h.RunAdb(5*time.Second, serialArgs(serial, "shell", "chmod", "600",
+		MiniShareRemoteDir+"/client.json")...)
+
+	startCmd := fmt.Sprintf("sh %s/share.sh start", MiniShareRemoteDir)
+	if iface != "" {
+		startCmd = fmt.Sprintf("sh %s/share.sh start %s", MiniShareRemoteDir, iface)
+	}
+	res := h.RunAdb(20*time.Second, serialArgs(serial, "shell", "su", "-c", startCmd)...)
 	for _, line := range strings.Split(strings.ReplaceAll(res.Output, "\r\n", "\n"), "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "OK:") {
@@ -596,15 +978,24 @@ func (h *Helper) StartRootHotspot(serial, dnsCsv string) (RootHotspotState, erro
 			return RootHotspotState{}, fmt.Errorf("%s", strings.TrimPrefix(line, "ERR:"))
 		}
 	}
-	return RootHotspotState{}, fmt.Errorf("root NAT setup failed (exit %d): %s", res.ExitCode, strings.TrimSpace(res.Output))
+	return RootHotspotState{}, fmt.Errorf("ошибка запуска MiniShare (exit %d): %s", res.ExitCode, strings.TrimSpace(res.Output))
 }
 
-// StopRootHotspot rolls back transparent NAT rules on the Android device.
-func (h *Helper) StopRootHotspot(serial string, st RootHotspotState) {
-	if serial == "" || !st.Applied {
+// IsMiniShareHealthy returns true if Android sing-box is alive and table 100 has default dev tun0.
+func (h *Helper) IsMiniShareHealthy(serial string) bool {
+	if serial == "" {
+		return false
+	}
+	res := h.RunAdb(4*time.Second, serialArgs(serial, "shell", "su", "-c",
+		fmt.Sprintf("sh %s/share.sh status", MiniShareRemoteDir))...)
+	return res.ExitCode == 0 && strings.Contains(res.Output, "HEALTHY")
+}
+
+// StopMiniShare stops sing-box on the phone and cleans up all routing/iptables rules.
+func (h *Helper) StopMiniShare(serial string) {
+	if serial == "" {
 		return
 	}
 	_ = h.RunAdb(8*time.Second, serialArgs(serial, "shell", "su", "-c",
-		fmt.Sprintf("sh /data/local/tmp/sharenet_root.sh stop %s %s %s", st.TunIface, st.ApIface, st.DnsServer))...)
-	_ = h.RunAdb(4*time.Second, serialArgs(serial, "shell", "rm", "-f", "/data/local/tmp/sharenet_root.sh")...)
+		fmt.Sprintf("sh %s/share.sh stop", MiniShareRemoteDir))...)
 }

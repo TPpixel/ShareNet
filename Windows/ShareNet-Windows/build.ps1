@@ -39,6 +39,13 @@ $sbCandidates = @(
 $sbSource = $sbCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $sbSource) { throw "sing-box.exe not found" }
 
+$sbAndroidCandidates = @(
+    (Join-Path $workspace "MiniShare-android\sing-box"),
+    (Join-Path $workspace "ShareNetUSB\tools\sing-box\sing-box-android")
+)
+$sbAndroidSource = $sbAndroidCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $sbAndroidSource) { throw "Android sing-box binary not found" }
+
 # Pack embedded runtime tools into internal/embedded/tools.zip
 $zipPath = Join-Path $root "internal\embedded\tools.zip"
 $zipTemp = "$zipPath.tmp"
@@ -56,7 +63,8 @@ try {
         @{ Src = (Join-Path $gnSource "gnirehtet.exe");    Entry = "tools/gnirehtet/gnirehtet.exe" },
         @{ Src = (Join-Path $gnSource "gnirehtet.apk");    Entry = "tools/gnirehtet/gnirehtet.apk" },
         @{ Src = $hpSource;                                Entry = "tools/hotspot-proxy/hotspot-proxy.apk" },
-        @{ Src = $sbSource;                                Entry = "tools/sing-box/sing-box.exe" }
+        @{ Src = $sbSource;                                Entry = "tools/sing-box/sing-box.exe" },
+        @{ Src = $sbAndroidSource;                         Entry = "tools/sing-box/sing-box-android" }
     )
     foreach ($item in $packList) {
         if (-not (Test-Path $item.Src)) { throw "Missing asset: $($item.Src)" }

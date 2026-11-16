@@ -671,11 +671,8 @@ public class MainActivity extends Activity {
         if (!hasControlExtra) {
             return;
         }
-        if (Build.VERSION.SDK_INT >= 34) {
-            int callerUid = getLaunchedFromUid();
-            if (callerUid >= 10000 && callerUid != android.os.Process.myUid()) {
-                return;
-            }
+        if (!isTrustedControlCaller(intent)) {
+            return;
         }
         if (intent.getBooleanExtra("stopall", false)) {
             performFullRollback();
@@ -702,6 +699,68 @@ public class MainActivity extends Activity {
                 startProxyService(port);
             }
         }
+    }
+
+    private boolean isTrustedControlCaller(Intent intent) {
+        try {
+            intent.removeExtra(Intent.EXTRA_REFERRER);
+            intent.removeExtra(Intent.EXTRA_REFERRER_NAME);
+        } catch (Throwable ignored) {
+        }
+        int myUid = android.os.Process.myUid();
+        if (Build.VERSION.SDK_INT >= 34) {
+            int callerUid = getLaunchedFromUid();
+            if (callerUid >= 10000 && callerUid != myUid) {
+                return false;
+            }
+        } else {
+            int callerUid = reflectLaunchedFromUid();
+            if (callerUid >= 10000 && callerUid != myUid) {
+                return false;
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+            Uri ref = getReferrer();
+            if (ref != null) {
+                String pkg = ref.getAuthority();
+                if (pkg != null && !pkg.isEmpty()
+                        && !pkg.equals(getPackageName())
+                        && !pkg.equals("com.android.shell")
+                        && !pkg.equals("android")
+                        && !pkg.equals("root")) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private int reflectLaunchedFromUid() {
+        try {
+            java.lang.reflect.Method getToken = Activity.class.getDeclaredMethod("getActivityToken");
+            getToken.setAccessible(true);
+            Object token = getToken.invoke(this);
+            if (token == null) {
+                return -1;
+            }
+            Object service = null;
+            if (Build.VERSION.SDK_INT >= 29) {
+                Class<?> atm = Class.forName("android.app.ActivityTaskManager");
+                service = atm.getMethod("getService").invoke(null);
+            } else {
+                Class<?> am = Class.forName("android.app.ActivityManager");
+                service = am.getMethod("getService").invoke(null);
+            }
+            if (service != null) {
+                java.lang.reflect.Method getUid = service.getClass().getMethod("getLaunchedFromUid", android.os.IBinder.class);
+                Object res = getUid.invoke(service, token);
+                if (res instanceof Integer) {
+                    return (Integer) res;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return -1;
     }
 
     @Override

@@ -785,7 +785,7 @@
             <span class="fluent-switch" aria-hidden="true"></span>
           </div>
           <div id="optRootHotspot" class="row switch-row" role="switch" tabindex="0" aria-checked="true" style="display:none">
-            <span class="row-label">Прозрачный Wi-Fi (Root NAT)</span>
+            <span class="row-label">Прозрачный Wi-Fi (Root · sing-box)</span>
             <span class="fluent-switch" aria-hidden="true"></span>
           </div>
         </div>
@@ -1140,7 +1140,9 @@
       usbStatus.textContent = "Применение настроек...";
     } else if (st.isSharing) {
       setDot(usbDot, "ok");
-      usbStatus.textContent = st.activeSerial ? "USB-туннель активен" : "Раздача активна";
+      usbStatus.textContent = st.rootNatActive
+        ? "Root-туннель (sing-box) активен"
+        : (st.activeSerial ? "USB-туннель активен" : "Раздача активна");
     } else if (st.deviceState === "ready") {
       setDot(usbDot, "ok");
       usbStatus.textContent = "Телефон готов к раздаче";
@@ -1152,7 +1154,8 @@
       usbStatus.textContent = "Поиск устройства Android...";
     }
 
-    $("usbDeviceName").textContent = st.deviceName ? (st.isRooted ? (st.deviceName + " · Root") : st.deviceName) : "Не подключён";
+    const rootBadge = st.isRooted ? " · Root" : (st.rootStatus === "denied" ? " · Root (нет прав Shell)" : "");
+    $("usbDeviceName").textContent = st.deviceName ? (st.deviceName + rootBadge) : "Не подключён";
     const hs = st.hotspot || {};
     $("usbHotspotVal").textContent = hs.isActive
       ? ((hs.ipAddress ? ("Вкл · " + hs.ipAddress) : "Включена") + (st.rootNatActive ? " · NAT" : ""))

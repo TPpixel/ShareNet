@@ -88,3 +88,17 @@ func TestIsIgnoredGatewayAdapter(t *testing.T) {
 		}
 	}
 }
+
+func TestParseTasklistPIDsAndUntrackedSingBox(t *testing.T) {
+	csvOut := "\"sing-box.exe\",\"12345\",\"Console\",\"1\",\"25,000 K\"\r\n\"other.exe\",\"999\",\"Console\",\"1\",\"10,000 K\"\r\n\"INFO: No tasks are running\"\r\n"
+	pids := parseTasklistPIDs(csvOut)
+	if len(pids) != 1 || !pids[12345] || pids[999] {
+		t.Fatalf("unexpected parsed tasklist PIDs: %#v", pids)
+	}
+
+	m := NewManagerWithRoot(t.TempDir(), nil)
+	m.tunPidPath = filepath.Join(t.TempDir(), "nonexistent.pid")
+	if m.IsSingBoxRunning() {
+		t.Fatal("expected IsSingBoxRunning=false when no tunPid is tracked")
+	}
+}

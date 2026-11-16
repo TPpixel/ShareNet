@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -30,14 +31,16 @@ type dnsEntry struct {
 // Server is a hardened local SOCKS5 TCP server on 127.0.0.1 with Cloudflare DoH (1.1.1.1) resolution
 // and SSRF protection, exposed to Android over `adb reverse tcp:10808 tcp:10808`.
 type Server struct {
-	port     int
-	listener net.Listener
-	sem      chan struct{}
-	cacheMu  sync.RWMutex
-	cache    map[string]dnsEntry
-	httpCli  *http.Client
-	running  atomic.Bool
-	mu       sync.Mutex
+	port      int
+	listener  net.Listener
+	sem       chan struct{}
+	cacheMu   sync.RWMutex
+	cache     map[string]dnsEntry
+	dnsMu     sync.RWMutex
+	customDns []string
+	httpCli   *http.Client
+	running   atomic.Bool
+	mu        sync.Mutex
 }
 
 // New creates a SOCKS5 server bound to 127.0.0.1:<port>.
@@ -335,6 +338,73 @@ func IsForbiddenTarget(ip net.IP) bool {
 	return false
 }
 
+// SetCustomDns configures custom IPv4 DNS servers (comma/colon/space-separated) for domain resolution.
+func (s *Server) SetCustomDns(dnsCsv string) {
+	var parsed []string
+	seen := make(map[string]bool)
+	for _, part := range strings.FieldsFunc(dnsCsv, func(r rune) bool {
+		return r == ',' || r == ':' || r == ';' || r == ' ' || r == '\t'
+	}) {
+		part = strings.TrimSpace(part)
+		ip := net.ParseIP(part)
+		if ip == nil || ip.To4() == nil || ip.IsLoopback() || ip.IsUnspecified() {
+			continue
+		}
+		str := ip.String()
+		if !seen[str] {
+			seen[str] = true
+			parsed = append(parsed, str)
+		}
+	}
+
+	s.dnsMu.Lock()
+	changed := len(s.customDns) != len(parsed)
+	if !changed {
+		for i := range parsed {
+			if s.customDns[i] != parsed[i] {
+				changed = true
+				break
+			}
+		}
+	}
+	s.customDns = parsed
+	s.dnsMu.Unlock()
+
+	if changed {
+		s.cacheMu.Lock()
+		s.cache = make(map[string]dnsEntry)
+		s.cacheMu.Unlock()
+	}
+}
+
+func (s *Server) queryCustomDns(host string) []net.IP {
+	s.dnsMu.RLock()
+	servers := append([]string(nil), s.customDns...)
+	s.dnsMu.RUnlock()
+
+	if len(servers) == 0 || servers[0] == "1.1.1.1" || servers[0] == "1.0.0.1" {
+		return nil
+	}
+
+	for _, srv := range servers {
+		target := net.JoinHostPort(srv, "53")
+		r := &net.Resolver{
+			PreferGo: true,
+			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+				d := &net.Dialer{Timeout: 2 * time.Second}
+				return d.DialContext(ctx, "udp", target)
+			},
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		addrs, err := r.LookupIP(ctx, "ip4", host)
+		cancel()
+		if err == nil && len(addrs) > 0 {
+			return addrs
+		}
+	}
+	return nil
+}
+
 func (s *Server) resolveHosts(host string) []net.IP {
 	if parsed := net.ParseIP(host); parsed != nil {
 		return []net.IP{parsed}
@@ -347,6 +417,13 @@ func (s *Server) resolveHosts(host string) []net.IP {
 		return out
 	}
 	s.cacheMu.RUnlock()
+
+	if ips := s.queryCustomDns(host); len(ips) > 0 {
+		s.cacheMu.Lock()
+		s.cache[host] = dnsEntry{ips: ips, expiresAt: now.Add(DnsCacheTTL)}
+		s.cacheMu.Unlock()
+		return ips
+	}
 
 	if ips := s.queryCloudflareDohAll(host); len(ips) > 0 {
 		s.cacheMu.Lock()

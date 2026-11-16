@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestFormatGnirehtetLog(t *testing.T) {
 	if _, ok := formatGnirehtetLog("2026-11-15 16:05:12.100 DEBUG relaylib::relay::tcp_connection: Open"); ok {
@@ -55,5 +60,48 @@ func TestIsAllowedExternalURL(t *testing.T) {
 		if isAllowedExternalURL(u) {
 			t.Errorf("expected rejected URL %q", u)
 		}
+	}
+}
+
+func TestSanitizeDnsSetting(t *testing.T) {
+	if got := sanitizeDnsSetting("1.1.1.1, 8.8.8.8"); got != "1.1.1.1:8.8.8.8" {
+		t.Fatalf("got %q, want 1.1.1.1:8.8.8.8", got)
+	}
+	if got := sanitizeDnsSetting("1.1.1.1; rm -rf /"); got != "1.1.1.1" {
+		t.Fatalf("expected non-IP injection stripped, got %q", got)
+	}
+	if got := sanitizeDnsSetting("not-an-ip"); got != "8.8.8.8" {
+		t.Fatalf("expected safe fallback 8.8.8.8 for invalid DNS, got %q", got)
+	}
+	if got := sanitizeDnsSetting(""); strings.TrimSpace(got) == "" {
+		t.Fatal("expected auto-detected fallback for empty DNS")
+	}
+}
+
+func TestCleanupStaleMiniShareConfigs(t *testing.T) {
+	tmp := t.TempDir()
+	origTmp := os.Getenv("TMP")
+	origTemp := os.Getenv("TEMP")
+	t.Setenv("TMP", tmp)
+	t.Setenv("TEMP", tmp)
+	defer func() {
+		_ = os.Setenv("TMP", origTmp)
+		_ = os.Setenv("TEMP", origTemp)
+	}()
+
+	stale := filepath.Join(tmp, "sharenet_pc_server_12345.json")
+	keep := filepath.Join(tmp, "unrelated_keep.json")
+	if err := os.WriteFile(stale, []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keep, []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cleanupStaleMiniShareConfigs()
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("expected stale temp config removed, err=%v", err)
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Fatalf("expected unrelated file preserved, err=%v", err)
 	}
 }

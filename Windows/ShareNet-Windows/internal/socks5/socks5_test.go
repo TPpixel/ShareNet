@@ -118,3 +118,14 @@ func TestResolveHostsSkipsForbiddenMixedWithPublicInFilter(t *testing.T) {
 		t.Fatalf("unexpected filtered candidates: %v", allowed)
 	}
 }
+
+func TestSetCustomDnsFiltering(t *testing.T) {
+	srv := New(0)
+	srv.SetCustomDns("127.0.0.1:0.0.0.0:9.9.9.9, bad-ip, 8.8.8.8:9.9.9.9")
+	srv.dnsMu.RLock()
+	got := append([]string(nil), srv.customDns...)
+	srv.dnsMu.RUnlock()
+	if len(got) != 2 || got[0] != "9.9.9.9" || got[1] != "8.8.8.8" {
+		t.Fatalf("unexpected customDns list: %#v", got)
+	}
+}

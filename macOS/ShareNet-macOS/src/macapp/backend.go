@@ -825,6 +825,8 @@ func (b *Backend) Connect(mode, manualGW string) StatusResponse {
 	backupArgs := buildDNSRestoreArgs(backupDNS)
 	runToken := fmt.Sprintf("%d-%d", time.Now().UnixNano(), os.Getpid())
 
+	_ = writeFileSafe(tunTokenPath, []byte(runToken+"\n"), 0o600)
+
 	// Use Perl setsid() and close FDs >= 3 so AppleScript `do shell script ... with administrator privileges`
 	// cannot block waiting on inherited authorization pipe descriptors held by background children.
 	perlDaemon := `use POSIX qw(setsid); my ($log,$pidf,@c)=@ARGV; my $p=fork(); die "fork: $!" unless defined $p; if($p==0){ setsid(); $SIG{HUP}="IGNORE"; POSIX::close($_) for 3..64; open(STDIN,"<","/dev/null"); open(STDOUT,">",$log); open(STDERR,">&STDOUT"); exec @c or exit 127; } if($pidf ne ""){ open(my $f,">",$pidf); print $f "$p\n"; close($f); }`
@@ -842,7 +844,7 @@ func (b *Backend) Connect(mode, manualGW string) StatusResponse {
 		`fi`
 
 	adminCmd := fmt.Sprintf(
-		"rm -f %s; "+
+		"rm -f %s %s; umask 077; "+
 			"printf '%%s\\n' %s > %s; "+
 			"OLD_PID=$(cat %s 2>/dev/null || true); "+
 			"if [ -n \"$OLD_PID\" ]; then kill -INT \"$OLD_PID\" >/dev/null 2>&1 || true; fi; "+
@@ -858,7 +860,7 @@ func (b *Backend) Connect(mode, manualGW string) StatusResponse {
 			"dscacheutil -flushcache >/dev/null 2>&1 || true; "+
 			"killall -HUP mDNSResponder >/dev/null 2>&1 || true; "+
 			"/usr/bin/perl -MPOSIX=setsid -e %s /dev/null '' /bin/sh -c %s _ \"$SB_PID\" %d %s %s %s %s %s %s %s %s",
-		shellQuote(b.stopFlagPath),
+		shellQuote(b.stopFlagPath), shellQuote(tunTokenPath),
 		shellQuote(runToken), shellQuote(tunTokenPath),
 		shellQuote(pidPath),
 		shellQuote(singBoxPgrepPattern),
