@@ -621,6 +621,9 @@ func (a *ShareApp) startMiniShareMode(serial, dns string, disablePrivDns bool) {
 		return
 	}
 	cfgPath := cfgFile.Name()
+	if pHost, pPort, ok := netutil.DetectWindowsSystemHttpProxy(); ok {
+		a.logf("Обнаружен системный HTTP-прокси (%s:%d) — трафик пойдёт через него.", pHost, pPort)
+	}
 	_, wErr := cfgFile.WriteString(adb.BuildMiniShareServerJSON(uuid, UsbSocksPort, dns))
 	cErr := cfgFile.Close()
 	if wErr != nil || cErr != nil {

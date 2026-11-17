@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -394,4 +395,93 @@ func HideWindow(cmd *exec.Cmd) {
 		HideWindow:    true,
 		CreationFlags: windows.CREATE_NO_WINDOW,
 	}
+}
+
+// ParseWindowsProxyServer extracts an HTTP/HTTPS proxy host and port from Windows Registry ProxyServer strings,
+// rejecting loopback/unspecified targets so ShareNet never loops traffic back into itself.
+func ParseWindowsProxyServer(raw string) (string, int, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", 0, false
+	}
+
+	parseHostPort := func(ep string) (string, int, bool) {
+		ep = strings.TrimSpace(ep)
+		ep = strings.TrimPrefix(ep, "http://")
+		ep = strings.TrimPrefix(ep, "https://")
+		ep = strings.TrimSuffix(ep, "/")
+		if ep == "" {
+			return "", 0, false
+		}
+		h, pStr, err := net.SplitHostPort(ep)
+		if err != nil {
+			return "", 0, false
+		}
+		h = strings.TrimSpace(h)
+		port, err := strconv.Atoi(strings.TrimSpace(pStr))
+		if err != nil || port < 1 || port > 65535 || h == "" {
+			return "", 0, false
+		}
+		if strings.EqualFold(h, "localhost") {
+			return "", 0, false
+		}
+		if ip := net.ParseIP(h); ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
+			return "", 0, false
+		}
+		return h, port, true
+	}
+
+	if !strings.Contains(raw, "=") && !strings.Contains(raw, ";") {
+		return parseHostPort(raw)
+	}
+
+	var httpCandidate, httpsCandidate string
+	for _, entry := range strings.Split(raw, ";") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		if idx := strings.IndexByte(entry, '='); idx > 0 {
+			scheme := strings.ToLower(strings.TrimSpace(entry[:idx]))
+			val := strings.TrimSpace(entry[idx+1:])
+			switch scheme {
+			case "https":
+				httpsCandidate = val
+			case "http":
+				httpCandidate = val
+			}
+		} else if httpCandidate == "" {
+			httpCandidate = entry
+		}
+	}
+	if httpsCandidate != "" {
+		if h, p, ok := parseHostPort(httpsCandidate); ok {
+			return h, p, true
+		}
+	}
+	if httpCandidate != "" {
+		if h, p, ok := parseHostPort(httpCandidate); ok {
+			return h, p, true
+		}
+	}
+	return "", 0, false
+}
+
+// DetectWindowsSystemHttpProxy returns the active Windows system HTTP proxy from HKCU Internet Settings if enabled.
+func DetectWindowsSystemHttpProxy() (string, int, bool) {
+	k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Internet Settings`, registry.QUERY_VALUE)
+	if err != nil {
+		return "", 0, false
+	}
+	defer k.Close()
+
+	enabled, _, err := k.GetIntegerValue("ProxyEnable")
+	if err != nil || enabled != 1 {
+		return "", 0, false
+	}
+	server, _, err := k.GetStringValue("ProxyServer")
+	if err != nil {
+		return "", 0, false
+	}
+	return ParseWindowsProxyServer(server)
 }

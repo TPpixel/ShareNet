@@ -89,3 +89,17 @@ func TestPathListHasExistingAdb(t *testing.T) {
 		t.Fatalf("expected true when %%ENV%% expands to existing adb.exe dir")
 	}
 }
+
+func TestParseWindowsProxyServer(t *testing.T) {
+	if h, p, ok := ParseWindowsProxyServer("10.5.0.10:3128"); !ok || h != "10.5.0.10" || p != 3128 {
+		t.Fatalf("got (%q, %d, %v), want (10.5.0.10, 3128, true)", h, p, ok)
+	}
+	if h, p, ok := ParseWindowsProxyServer("http=192.168.10.2:8080;https=192.168.10.3:8443;socks=192.168.10.4:1080"); !ok || h != "192.168.10.3" || p != 8443 {
+		t.Fatalf("got (%q, %d, %v), want https candidate", h, p, ok)
+	}
+	for _, reject := range []string{"", "127.0.0.1:8080", "localhost:3128", "socks=10.0.0.1:1080", "0.0.0.0:8080"} {
+		if h, p, ok := ParseWindowsProxyServer(reject); ok {
+			t.Fatalf("expected %q rejected, got (%q, %d)", reject, h, p)
+		}
+	}
+}

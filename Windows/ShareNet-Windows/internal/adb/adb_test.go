@@ -80,13 +80,21 @@ func TestMiniShareConfigsAndUUID(t *testing.T) {
 		t.Fatalf("loopback DNS must never be exempted from server SSRF reject rules: %s", srvLoopbackDns)
 	}
 	cli := BuildMiniShareClientJSON(u1, 10808, 1053, "192.168.1.1:1.1.1.1")
-	for _, want := range []string{u1, `"1.1.1.1"`, `"xudp"`, `"mtu": 1500`, `"gvisor"`, `"warn"`, `"198.18.0.0/15"`, `"reject"`} {
+	for _, want := range []string{u1, `"1.1.1.1"`, `"https"`, `"/dns-query"`, `"xudp"`, `"mtu": 1500`, `"gvisor"`, `"warn"`, `"198.18.0.0/15"`, `"reject"`} {
 		if !strings.Contains(cli, want) {
 			t.Fatalf("unexpected client config (missing %s): %s", want, cli)
 		}
 	}
 	if strings.Contains(cli, `"outbound": "direct"`) {
 		t.Fatalf("client config must not route private IPs to direct: %s", cli)
+	}
+	cliLanDns := BuildMiniShareClientJSON(u1, 10808, 1053, "10.1.0.5")
+	if !strings.Contains(cliLanDns, `"type": "udp"`) || !strings.Contains(cliLanDns, `"10.1.0.5"`) {
+		t.Fatalf("expected UDP DNS for explicit private DNS server, got: %s", cliLanDns)
+	}
+	srvWithProxy := buildMiniShareServerJSONWithProxy(u1, 10808, "1.1.1.1", "10.5.0.10", 3128)
+	if !strings.Contains(srvWithProxy, `"upstream-proxy"`) || !strings.Contains(srvWithProxy, `"10.5.0.10"`) || !strings.Contains(srvWithProxy, `"final": "upstream-proxy"`) {
+		t.Fatalf("expected HTTP upstream proxy config, got: %s", srvWithProxy)
 	}
 }
 

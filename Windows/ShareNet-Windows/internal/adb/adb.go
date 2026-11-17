@@ -534,12 +534,25 @@ var miniShareForbiddenCIDRs = []string{
 
 // BuildMiniShareServerJSON builds the Windows sing-box VLESS server config (bound strictly to 127.0.0.1)
 // and rejects loopback, link-local, and RFC1918 LAN targets to prevent SSRF from hotspot clients.
+// If an external Windows system HTTP proxy is enabled, traffic is forwarded through it.
 func BuildMiniShareServerJSON(uuid string, listenPort int, allowedDns ...string) string {
+	dnsArg := ""
+	if len(allowedDns) > 0 {
+		dnsArg = allowedDns[0]
+	}
+	pHost, pPort, ok := netutil.DetectWindowsSystemHttpProxy()
+	if !ok {
+		pHost, pPort = "", 0
+	}
+	return buildMiniShareServerJSONWithProxy(uuid, listenPort, dnsArg, pHost, pPort)
+}
+
+func buildMiniShareServerJSONWithProxy(uuid string, listenPort int, allowedDns, proxyHost string, proxyPort int) string {
 	routeRules := []map[string]interface{}{
 		{"action": "resolve"},
 	}
-	if len(allowedDns) > 0 {
-		dnsIP := PrimaryDnsIP(allowedDns[0])
+	if strings.TrimSpace(allowedDns) != "" {
+		dnsIP := PrimaryDnsIP(allowedDns)
 		if isSafePrivateDnsIP(dnsIP) {
 			routeRules = append(routeRules, map[string]interface{}{
 				"ip_cidr":  []string{dnsIP + "/32"},
@@ -559,6 +572,23 @@ func BuildMiniShareServerJSON(uuid string, listenPort int, allowedDns ...string)
 			"action":        "reject",
 		},
 	)
+
+	outbounds := []map[string]interface{}{
+		{
+			"type": "direct",
+			"tag":  "direct",
+		},
+	}
+	finalOutbound := "direct"
+	if proxyHost != "" && proxyPort > 0 {
+		outbounds = append(outbounds, map[string]interface{}{
+			"type":        "http",
+			"tag":         "upstream-proxy",
+			"server":      proxyHost,
+			"server_port": proxyPort,
+		})
+		finalOutbound = "upstream-proxy"
+	}
 
 	cfg := map[string]interface{}{
 		"log": map[string]interface{}{
@@ -584,16 +614,11 @@ func BuildMiniShareServerJSON(uuid string, listenPort int, allowedDns ...string)
 				},
 			},
 		},
-		"outbounds": []map[string]interface{}{
-			{
-				"type": "direct",
-				"tag":  "direct",
-			},
-		},
+		"outbounds": outbounds,
 		"route": map[string]interface{}{
 			"default_domain_resolver": "dns-guard",
 			"rules":                   routeRules,
-			"final":                   "direct",
+			"final":                   finalOutbound,
 		},
 	}
 	raw, _ := json.MarshalIndent(cfg, "", "  ")
@@ -603,21 +628,41 @@ func BuildMiniShareServerJSON(uuid string, listenPort int, allowedDns ...string)
 // BuildMiniShareClientJSON builds the Android sing-box client config (tun0 + DNS hijack over VLESS xudp).
 func BuildMiniShareClientJSON(uuid string, serverPort, dnsPort int, dnsServer string) string {
 	dnsIP := PrimaryDnsIP(dnsServer)
+	var dnsEntry map[string]interface{}
+	switch {
+	case dnsIP == "1.1.1.1" || dnsIP == "1.0.0.1" || dnsIP == "8.8.8.8" || dnsIP == "8.8.4.4":
+		dnsEntry = map[string]interface{}{
+			"type":        "https",
+			"tag":         "remote-dns",
+			"server":      dnsIP,
+			"server_port": 443,
+			"path":        "/dns-query",
+			"detour":      "proxy",
+		}
+	case isSafePrivateDnsIP(dnsIP):
+		dnsEntry = map[string]interface{}{
+			"type":   "udp",
+			"tag":    "remote-dns",
+			"server": dnsIP,
+			"detour": "proxy",
+		}
+	default:
+		dnsEntry = map[string]interface{}{
+			"type":   "tcp",
+			"tag":    "remote-dns",
+			"server": dnsIP,
+			"detour": "proxy",
+		}
+	}
+
 	cfg := map[string]interface{}{
 		"log": map[string]interface{}{
 			"level":     "warn",
 			"timestamp": true,
 		},
 		"dns": map[string]interface{}{
-			"servers": []map[string]interface{}{
-				{
-					"type":   "tcp",
-					"tag":    "remote-dns",
-					"server": dnsIP,
-					"detour": "proxy",
-				},
-			},
-			"final": "remote-dns",
+			"servers": []map[string]interface{}{dnsEntry},
+			"final":   "remote-dns",
 		},
 		"inbounds": []map[string]interface{}{
 			{
