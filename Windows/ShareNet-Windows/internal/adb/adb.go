@@ -1044,3 +1044,44 @@ func (h *Helper) StopMiniShare(serial string) {
 	_ = h.RunAdb(8*time.Second, serialArgs(serial, "shell", "su", "-c",
 		fmt.Sprintf("sh %s/share.sh stop", MiniShareRemoteDir))...)
 }
+
+// HasReversePort reports whether `adb reverse --list` output contains `tcp:<port> tcp:<port>`.
+func HasReversePort(raw string, port int) bool {
+	if port <= 0 {
+		return false
+	}
+	target := fmt.Sprintf("tcp:%d", port)
+	for _, line := range strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 3 && fields[1] == target && fields[2] == target {
+			return true
+		}
+	}
+	return false
+}
+
+// SetupReversePort resets and binds `adb reverse tcp:<port> tcp:<port>` for the given device.
+func (h *Helper) SetupReversePort(serial string, port int) CommandResult {
+	spec := fmt.Sprintf("tcp:%d", port)
+	_ = h.RunAdb(3*time.Second, serialArgs(serial, "reverse", "--remove", spec)...)
+	return h.RunAdb(5*time.Second, serialArgs(serial, "reverse", spec, spec)...)
+}
+
+// EnsureReversePort checks `adb reverse --list` and restores `tcp:<port>` if USB reset dropped it.
+func (h *Helper) EnsureReversePort(serial string, port int) (bool, error) {
+	if serial == "" || port <= 0 {
+		return false, nil
+	}
+	listRes := h.RunAdb(3*time.Second, serialArgs(serial, "reverse", "--list")...)
+	if listRes.ExitCode != 0 {
+		return false, fmt.Errorf("adb reverse --list exit %d: %s", listRes.ExitCode, strings.TrimSpace(listRes.Output))
+	}
+	if HasReversePort(listRes.Output, port) {
+		return false, nil
+	}
+	revRes := h.SetupReversePort(serial, port)
+	if revRes.ExitCode != 0 {
+		return false, fmt.Errorf("adb reverse tcp:%d exit %d: %s", port, revRes.ExitCode, strings.TrimSpace(revRes.Output))
+	}
+	return true, nil
+}

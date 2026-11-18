@@ -302,6 +302,7 @@ func (a *ShareApp) refreshDevices() {
 	a.mu.Lock()
 	checkedSerial := a.rootCheckedSerial
 	miniActive := a.isSharing && !a.isBusy && a.miniShareCmd != nil && a.rootNat.Applied && !a.rootNatBusy
+	reverseActive := a.isSharing && !a.isBusy && (a.miniShareCmd != nil || a.socks != nil)
 	a.mu.Unlock()
 
 	if ready != nil && checkedSerial != ready.Serial {
@@ -316,6 +317,14 @@ func (a *ShareApp) refreshDevices() {
 			a.log("Обнаружен Root-доступ на телефоне — применён прозрачный режим (sing-box).")
 		} else if status == "denied" {
 			a.log("Найден Magisk/su, но нет прав для Shell (ADB): откройте Magisk -> Суперпользователь и включите Shell.")
+		}
+	}
+
+	if ready != nil && reverseActive {
+		if restored, err := a.adb.EnsureReversePort(ready.Serial, UsbSocksPort); restored {
+			a.logf("Восстановлен проброс adb reverse :%d после сбоя USB.", UsbSocksPort)
+		} else if err != nil {
+			a.logf("Предупреждение adb reverse :%d: %v", UsbSocksPort, err)
 		}
 	}
 
@@ -509,8 +518,7 @@ func (a *ShareApp) startSharing(dns string, disablePrivDns, startProxy bool) {
 		activeSocks.SetCustomDns(dns)
 	}
 
-	_ = a.adb.RunAdb(3*time.Second, "-s", serial, "reverse", "--remove", fmt.Sprintf("tcp:%d", UsbSocksPort))
-	revRes := a.adb.RunAdb(5*time.Second, "-s", serial, "reverse", fmt.Sprintf("tcp:%d", UsbSocksPort), fmt.Sprintf("tcp:%d", UsbSocksPort))
+	revRes := a.adb.SetupReversePort(serial, UsbSocksPort)
 	if revRes.ExitCode != 0 {
 		a.log("Предупреждение: adb reverse для SOCKS5 не сработал.")
 	}
@@ -636,8 +644,7 @@ func (a *ShareApp) startMiniShareMode(serial, dns string, disablePrivDns bool) {
 		return
 	}
 
-	_ = a.adb.RunAdb(3*time.Second, "-s", serial, "reverse", "--remove", fmt.Sprintf("tcp:%d", UsbSocksPort))
-	revRes := a.adb.RunAdb(5*time.Second, "-s", serial, "reverse", fmt.Sprintf("tcp:%d", UsbSocksPort), fmt.Sprintf("tcp:%d", UsbSocksPort))
+	revRes := a.adb.SetupReversePort(serial, UsbSocksPort)
 	if revRes.ExitCode != 0 {
 		_ = os.Remove(cfgPath)
 		a.mu.Lock()

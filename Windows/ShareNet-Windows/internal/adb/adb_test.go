@@ -114,3 +114,22 @@ func TestMiniShareIfaceValidation(t *testing.T) {
 		t.Fatalf("expected StartMiniShare to reject unsafe interface name, got err=%v", err)
 	}
 }
+
+func TestHasReversePort(t *testing.T) {
+	if HasReversePort("", 10808) {
+		t.Fatal("expected false on empty output")
+	}
+	if HasReversePort("UsbFfs tcp:108080 tcp:108080\n", 10808) {
+		t.Fatal("must not match port prefix 108080 for 10808")
+	}
+	if HasReversePort("UsbFfs tcp:10808 tcp:10809\n", 10808) {
+		t.Fatal("must require matching remote and local port")
+	}
+	raw := "UsbFfs tcp:31416 tcp:31416\nUsbFfs tcp:10808 tcp:10808\r\n"
+	if !HasReversePort(raw, 10808) {
+		t.Fatalf("expected reverse port 10808 detected in %q", raw)
+	}
+	if HasReversePort(raw, 0) {
+		t.Fatal("expected false for invalid port 0")
+	}
+}
