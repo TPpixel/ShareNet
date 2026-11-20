@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"com.tppixel/sharenetusb/internal/netutil"
@@ -60,6 +61,10 @@ type Helper struct {
 	HotspotProxyApkPath     string
 	SingBoxExePath          string
 	SingBoxAndroidPath      string
+
+	dumpsysMu           sync.Mutex
+	dumpsysBackoffUntil time.Time
+	lastDumpsysCheck    time.Time
 }
 
 var (
@@ -158,6 +163,7 @@ func runCommand(bin, dir string, env []string, timeout time.Duration, args ...st
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.WaitDelay = 500 * time.Millisecond
 	if dir != "" {
 		cmd.Dir = dir
 	}
@@ -171,6 +177,9 @@ func runCommand(bin, dir string, env []string, timeout time.Duration, args ...st
 	cmd.Stderr = &outBuf
 	err := cmd.Run()
 	if ctx.Err() == context.DeadlineExceeded {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
 		return CommandResult{ExitCode: -1, Output: fmt.Sprintf("Превышено время ожидания %s.", filepath.Base(bin))}
 	}
 	code := 0
@@ -212,12 +221,23 @@ func ParseDevicesOutput(raw string) []DeviceInfo {
 	return devices
 }
 
-func (h *Helper) GetDevices() []DeviceInfo {
+func (h *Helper) GetDevicesWithErr() ([]DeviceInfo, error) {
 	res := h.RunAdb(8*time.Second, "devices", "-l")
-	if res.ExitCode != 0 || res.Output == "" {
+	if res.ExitCode != 0 {
+		return nil, fmt.Errorf("adb devices exit %d: %s", res.ExitCode, strings.TrimSpace(res.Output))
+	}
+	if res.Output == "" {
+		return nil, fmt.Errorf("adb devices returned empty output")
+	}
+	return ParseDevicesOutput(res.Output), nil
+}
+
+func (h *Helper) GetDevices() []DeviceInfo {
+	devs, err := h.GetDevicesWithErr()
+	if err != nil {
 		return nil
 	}
-	return ParseDevicesOutput(res.Output)
+	return devs
 }
 
 func (h *Helper) GetInstalledVersionCode(serial, pkg string) int {
@@ -352,9 +372,34 @@ func (h *Helper) DetectHotspotStatus(serial string) HotspotStatus {
 	if serial == "" {
 		return HotspotStatus{}
 	}
-	tRes := h.RunAdb(6*time.Second, "-s", serial, "shell", "dumpsys", "tethering")
-	ipRes := h.RunAdb(6*time.Second, "-s", serial, "shell", "ip", "-4", "addr")
+	// Fast non-blocking path first: `ip -4 addr` never hangs Android's tethering service.
+	ipRes := h.RunAdb(4*time.Second, "-s", serial, "shell", "ip", "-4", "addr")
 	if ipRes.ExitCode != 0 || ipRes.Output == "" {
+		return HotspotStatus{}
+	}
+	if st := ParseHotspotStatus("", ipRes.Output); st.IsActive {
+		return st
+	}
+
+	// Only fall back to `dumpsys tethering` when interface prefix didn't match,
+	// rate-limited and with backoff on timeout so a wedged tethering service cannot stall ADB.
+	now := time.Now()
+	h.dumpsysMu.Lock()
+	allowDumpsys := now.After(h.dumpsysBackoffUntil) && now.Sub(h.lastDumpsysCheck) >= 30*time.Second
+	if allowDumpsys {
+		h.lastDumpsysCheck = now
+	}
+	h.dumpsysMu.Unlock()
+
+	if !allowDumpsys {
+		return HotspotStatus{}
+	}
+
+	tRes := h.RunAdb(3*time.Second, "-s", serial, "shell", "dumpsys", "tethering")
+	if tRes.ExitCode == -1 {
+		h.dumpsysMu.Lock()
+		h.dumpsysBackoffUntil = time.Now().Add(90 * time.Second)
+		h.dumpsysMu.Unlock()
 		return HotspotStatus{}
 	}
 	return ParseHotspotStatus(tRes.Output, ipRes.Output)
@@ -431,16 +476,23 @@ type RootHotspotState struct {
 	DnsServer string `json:"dnsServer"`
 }
 
-// CheckRootStatus returns "rooted" if su grants uid=0, "denied" if su exists without permission, or "none".
+// CheckRootStatus returns "rooted" if su grants uid=0, "denied" if su exists without permission,
+// "unknown" if ADB timed out, or "none".
 func (h *Helper) CheckRootStatus(serial string) string {
 	if serial == "" {
 		return "none"
 	}
-	res := h.RunAdb(4*time.Second, serialArgs(serial, "shell", "su", "-c", "id")...)
+	res := h.RunAdb(8*time.Second, serialArgs(serial, "shell", "su", "-c", "id")...)
 	if strings.Contains(res.Output, "uid=0(") {
 		return "rooted"
 	}
-	whichRes := h.RunAdb(3*time.Second, serialArgs(serial, "shell", "which su || ls /debug_ramdisk/su /sbin/su /system_ext/bin/su /system/xbin/su 2>/dev/null")...)
+	if res.ExitCode == -1 {
+		return "unknown"
+	}
+	whichRes := h.RunAdb(4*time.Second, serialArgs(serial, "shell", "which su || ls /debug_ramdisk/su /sbin/su /system_ext/bin/su /system/xbin/su 2>/dev/null")...)
+	if whichRes.ExitCode == -1 {
+		return "unknown"
+	}
 	if strings.Contains(whichRes.Output, "/su") {
 		return "denied"
 	}
@@ -491,8 +543,10 @@ func isSimpleIPv4(s string) bool {
 }
 
 const (
-	MiniShareRemoteDir = "/data/local/tmp/sharenet-root"
-	MiniShareDnsPort   = 1053
+	MiniShareRemoteDir  = "/data/local/tmp/sharenet-root"
+	MiniShareDnsPort    = 1053
+	MiniShareRedirPort  = 12345
+	MiniShareTproxyPort = 12346
 )
 
 // GenerateUUIDv4 returns a random RFC 4122 v4 UUID string.
@@ -549,6 +603,9 @@ func BuildMiniShareServerJSON(uuid string, listenPort int, allowedDns ...string)
 
 func buildMiniShareServerJSONWithProxy(uuid string, listenPort int, allowedDns, proxyHost string, proxyPort int) string {
 	routeRules := []map[string]interface{}{
+		{"action": "sniff"},
+		{"protocol": "dns", "action": "hijack-dns"},
+		{"port": 53, "action": "hijack-dns"},
 		{"action": "resolve"},
 	}
 	if strings.TrimSpace(allowedDns) != "" {
@@ -602,6 +659,7 @@ func buildMiniShareServerJSONWithProxy(uuid string, listenPort int, allowedDns, 
 					"tag":  "dns-guard",
 				},
 			},
+			"final": "dns-guard",
 		},
 		"inbounds": []map[string]interface{}{
 			{
@@ -625,12 +683,24 @@ func buildMiniShareServerJSONWithProxy(uuid string, listenPort int, allowedDns, 
 	return string(raw) + "\n"
 }
 
-// BuildMiniShareClientJSON builds the Android sing-box client config (tun0 + DNS hijack over VLESS xudp).
+// BuildMiniShareClientJSON builds the high-speed Android sing-box client config
+// using native kernel REDIRECT (TCP) + TPROXY (UDP) + DNS hijack over VLESS xudp,
+// eliminating TUN/gVisor userspace TCP/IP bottlenecks.
 func BuildMiniShareClientJSON(uuid string, serverPort, dnsPort int, dnsServer string) string {
+	return BuildMiniShareClientJSONWithStack(uuid, serverPort, dnsPort, dnsServer, "native")
+}
+
+// BuildMiniShareClientJSONWithStack builds the Android sing-box client config.
+// Supported modes: "native" (default, kernel REDIRECT+TPROXY without TUN/gVisor),
+// "gvisor" or "system" (legacy tun0 mode).
+func BuildMiniShareClientJSONWithStack(uuid string, serverPort, dnsPort int, dnsServer, tunStack string) string {
+	if tunStack != "native" && tunStack != "system" && tunStack != "gvisor" {
+		tunStack = "native"
+	}
 	dnsIP := PrimaryDnsIP(dnsServer)
 	var dnsEntry map[string]interface{}
 	switch {
-	case dnsIP == "1.1.1.1" || dnsIP == "1.0.0.1" || dnsIP == "8.8.8.8" || dnsIP == "8.8.4.4":
+	case dnsIP == "1.1.1.1" || dnsIP == "1.0.0.1" || dnsIP == "8.8.8.8" || dnsIP == "8.8.4.4" || dnsIP == "9.9.9.9" || dnsIP == "149.112.112.112":
 		dnsEntry = map[string]interface{}{
 			"type":        "https",
 			"tag":         "remote-dns",
@@ -647,11 +717,58 @@ func BuildMiniShareClientJSON(uuid string, serverPort, dnsPort int, dnsServer st
 			"detour": "proxy",
 		}
 	default:
+		// Default to DoH over TCP 443 when the DNS server is not a known DoH IP or safe LAN DNS,
+		// because TCP/UDP port 53 is frequently filtered in restricted networks.
 		dnsEntry = map[string]interface{}{
-			"type":   "tcp",
-			"tag":    "remote-dns",
-			"server": dnsIP,
-			"detour": "proxy",
+			"type":        "https",
+			"tag":         "remote-dns",
+			"server":      "1.1.1.1",
+			"server_port": 443,
+			"path":        "/dns-query",
+			"detour":      "proxy",
+		}
+	}
+
+	var inbounds []map[string]interface{}
+	if tunStack == "native" {
+		inbounds = []map[string]interface{}{
+			{
+				"type":        "redirect",
+				"tag":         "redir-in",
+				"listen":      "0.0.0.0",
+				"listen_port": MiniShareRedirPort,
+			},
+			{
+				"type":        "tproxy",
+				"tag":         "tproxy-in",
+				"listen":      "0.0.0.0",
+				"listen_port": MiniShareTproxyPort,
+				"network":     "udp",
+			},
+			{
+				"type":        "direct",
+				"tag":         "dns-in",
+				"listen":      "0.0.0.0",
+				"listen_port": dnsPort,
+			},
+		}
+	} else {
+		inbounds = []map[string]interface{}{
+			{
+				"type":           "tun",
+				"tag":            "tun0-in",
+				"interface_name": "tun0",
+				"stack":          tunStack,
+				"address":        []string{"172.19.0.1/30"},
+				"mtu":            1500,
+				"auto_route":     false,
+			},
+			{
+				"type":        "direct",
+				"tag":         "dns-in",
+				"listen":      "0.0.0.0",
+				"listen_port": dnsPort,
+			},
 		}
 	}
 
@@ -664,23 +781,7 @@ func BuildMiniShareClientJSON(uuid string, serverPort, dnsPort int, dnsServer st
 			"servers": []map[string]interface{}{dnsEntry},
 			"final":   "remote-dns",
 		},
-		"inbounds": []map[string]interface{}{
-			{
-				"type":           "tun",
-				"tag":            "tun0-in",
-				"interface_name": "tun0",
-				"stack":          "gvisor",
-				"address":        []string{"172.19.0.1/30"},
-				"mtu":            1500,
-				"auto_route":     false,
-			},
-			{
-				"type":        "direct",
-				"tag":         "dns-in",
-				"listen":      "0.0.0.0",
-				"listen_port": dnsPort,
-			},
-		},
+		"inbounds": inbounds,
 		"outbounds": []map[string]interface{}{
 			{
 				"type":            "vless",
@@ -721,6 +822,12 @@ TUN_IF="tun0"
 ROUTE_TABLE="100"
 RULE_PREF_HOTSPOT="9000"
 DNS_PORT="1053"
+REDIR_PORT="12345"
+REDIR_PORT_HEX="3039"
+TPROXY_PORT="12346"
+# Use bit 29 (outside Android netd's 0x00ffffff fwmark space such as 0x30063)
+# so reflected marks on SYN-ACK/local packets never collide with TPROXY policy routing.
+TPROXY_MARK="0x20000000"
 
 is_valid_iface() {
   case "$1" in
@@ -741,6 +848,10 @@ detect_hotspot_iface() {
   return 1
 }
 
+is_port_listening() {
+  grep -qiE ":$1[[:space:]]+[0-9A-Fa-f]+:0000[[:space:]]+0A" /proc/net/tcp /proc/net/tcp6 2>/dev/null
+}
+
 ipt_fwd_est_add() {
   iptables -w -I FORWARD 1 -i "$1" -o "$2" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || \
   iptables -w -I FORWARD 1 -i "$1" -o "$2" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null
@@ -754,6 +865,9 @@ ipt_fwd_est_del() {
 stop_rules_for_iface() {
   _IF="$1"
   is_valid_iface "$_IF" || return
+  while iptables -w -t nat -D PREROUTING -i "$_IF" -j SHARENET_NAT 2>/dev/null; do :; done
+  while iptables -w -t mangle -D PREROUTING -i "$_IF" -p udp -j SHARENET_TPROXY 2>/dev/null; do :; done
+  # Legacy tun0 rules cleanup
   iptables -w -t nat -D PREROUTING -i "$_IF" -p udp --dport 53 -j REDIRECT --to-ports "$DNS_PORT" 2>/dev/null
   iptables -w -t nat -D PREROUTING -i "$_IF" -p tcp --dport 53 -j REDIRECT --to-ports "$DNS_PORT" 2>/dev/null
   iptables -w -D INPUT -i "$_IF" -p udp --dport "$DNS_PORT" -j ACCEPT 2>/dev/null
@@ -772,6 +886,14 @@ stop_all() {
   for _f in ap0 wlan1 wlan2 swlan0 softap0 rndis0 ncm0 usb0; do
     stop_rules_for_iface "$_f"
   done
+  while iptables -w -D INPUT -j SHARENET_IN 2>/dev/null; do :; done
+  iptables -w -F SHARENET_IN 2>/dev/null || true
+  iptables -w -X SHARENET_IN 2>/dev/null || true
+  iptables -w -t nat -F SHARENET_NAT 2>/dev/null || true
+  iptables -w -t nat -X SHARENET_NAT 2>/dev/null || true
+  iptables -w -t mangle -F SHARENET_TPROXY 2>/dev/null || true
+  iptables -w -t mangle -X SHARENET_TPROXY 2>/dev/null || true
+
   while ip rule del pref "$RULE_PREF_HOTSPOT" 2>/dev/null; do :; done
   iptables -w -t nat -D POSTROUTING -o "$TUN_IF" -j MASQUERADE 2>/dev/null
   ip route flush table "$ROUTE_TABLE" 2>/dev/null
@@ -831,7 +953,7 @@ case "$1" in
     chmod 600 "$PIDFILE" "$LOGFILE" 2>/dev/null || true
 
     WAIT_COUNT=0
-    TUN_READY=0
+    READY=0
     while [ "$WAIT_COUNT" -lt 24 ]; do
       if ! kill -0 "$SB_PID" 2>/dev/null; then
         LAST_ERR=$(tail -n 5 "$LOGFILE" 2>/dev/null | tr '\n' ' ')
@@ -840,15 +962,16 @@ case "$1" in
         cleanup_sensitive
         exit 6
       fi
-      if ip -o link show up 2>/dev/null | grep -q " $TUN_IF[:@]"; then
-        TUN_READY=1
+      if is_port_listening "$REDIR_PORT_HEX"; then
+        READY=1
         break
       fi
       WAIT_COUNT=$((WAIT_COUNT + 1))
-      sleep 0.4 2>/dev/null || sleep 1
+      sleep 0.25 2>/dev/null || sleep 1
     done
-    if [ "$TUN_READY" -ne 1 ]; then
-      echo "ERR:NO_TUN"
+    if [ "$READY" -ne 1 ]; then
+      LAST_ERR=$(tail -n 5 "$LOGFILE" 2>/dev/null | tr '\n' ' ')
+      echo "ERR:NO_REDIR:$LAST_ERR"
       stop_all
       cleanup_sensitive
       exit 2
@@ -857,28 +980,54 @@ case "$1" in
     sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1
     sysctl -w net.ipv4.conf.all.rp_filter=0 >/dev/null 2>&1
     sysctl -w "net.ipv4.conf.$HOTSPOT_IF.rp_filter=0" >/dev/null 2>&1
-    sysctl -w "net.ipv4.conf.$TUN_IF.rp_filter=0" >/dev/null 2>&1
+    sysctl -w net.ipv4.conf.lo.rp_filter=0 >/dev/null 2>&1
 
-    ip route flush table "$ROUTE_TABLE" 2>/dev/null
-    ip route replace default dev "$TUN_IF" table "$ROUTE_TABLE" || { echo "ERR:ROUTE_TUN_FAIL"; stop_all; cleanup_sensitive; exit 7; }
-    HOTSPOT_SUBNET=$(ip -4 route show dev "$HOTSPOT_IF" proto kernel 2>/dev/null | awk 'NR==1{print $1}')
-    if [ -n "$HOTSPOT_SUBNET" ]; then
-      ip route replace "$HOTSPOT_SUBNET" dev "$HOTSPOT_IF" table "$ROUTE_TABLE"
+    # Protect local sing-box ports: allow only hotspot interface, drop external access.
+    iptables -w -N SHARENET_IN 2>/dev/null || true
+    iptables -w -F SHARENET_IN
+    iptables -w -A SHARENET_IN -i "$HOTSPOT_IF" -p udp --dport "$DNS_PORT" -j ACCEPT
+    iptables -w -A SHARENET_IN -i "$HOTSPOT_IF" -p tcp --dport "$DNS_PORT" -j ACCEPT
+    iptables -w -A SHARENET_IN -i "$HOTSPOT_IF" -p tcp --dport "$REDIR_PORT" -j ACCEPT
+    iptables -w -A SHARENET_IN -i "$HOTSPOT_IF" -m mark --mark "$TPROXY_MARK/$TPROXY_MARK" -j ACCEPT
+    iptables -w -A SHARENET_IN ! -i "$HOTSPOT_IF" -p udp --dport "$DNS_PORT" -j DROP
+    iptables -w -A SHARENET_IN ! -i "$HOTSPOT_IF" -p tcp --dport "$DNS_PORT" -j DROP
+    iptables -w -A SHARENET_IN ! -i "$HOTSPOT_IF" -p tcp --dport "$REDIR_PORT" -j DROP
+    iptables -w -A SHARENET_IN ! -i "$HOTSPOT_IF" -p udp --dport "$TPROXY_PORT" -j DROP
+    iptables -w -I INPUT 1 -j SHARENET_IN
+
+    # Native kernel TCP REDIRECT + DNS REDIRECT (zero TUN / zero gVisor overhead).
+    iptables -w -t nat -N SHARENET_NAT 2>/dev/null || true
+    iptables -w -t nat -F SHARENET_NAT
+    iptables -w -t nat -A SHARENET_NAT -p udp --dport 53 -j REDIRECT --to-ports "$DNS_PORT"
+    iptables -w -t nat -A SHARENET_NAT -p tcp --dport 53 -j REDIRECT --to-ports "$DNS_PORT"
+    for _cidr in 0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.168.0.0/16 224.0.0.0/4 240.0.0.0/4; do
+      iptables -w -t nat -A SHARENET_NAT -d "$_cidr" -j RETURN
+    done
+    iptables -w -t nat -A SHARENET_NAT -p tcp -j REDIRECT --to-ports "$REDIR_PORT"
+    iptables -w -t nat -I PREROUTING 1 -i "$HOTSPOT_IF" -j SHARENET_NAT || { echo "ERR:NAT_FAIL"; stop_all; cleanup_sensitive; exit 7; }
+
+    # Native kernel UDP TPROXY (best-effort if kernel supports xt_TPROXY).
+    MODE_TAG="redir"
+    if iptables -w -t mangle -N SHARENET_TPROXY 2>/dev/null || iptables -w -t mangle -F SHARENET_TPROXY 2>/dev/null; then
+      iptables -w -t mangle -F SHARENET_TPROXY
+      iptables -w -t mangle -A SHARENET_TPROXY -p udp --dport 53 -j RETURN
+      iptables -w -t mangle -A SHARENET_TPROXY -p udp --dport 67 -j RETURN
+      iptables -w -t mangle -A SHARENET_TPROXY -p udp --dport 68 -j RETURN
+      for _cidr in 0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.168.0.0/16 224.0.0.0/4 240.0.0.0/4; do
+        iptables -w -t mangle -A SHARENET_TPROXY -d "$_cidr" -j RETURN
+      done
+      if iptables -w -t mangle -A SHARENET_TPROXY -p udp -j TPROXY --on-port "$TPROXY_PORT" --on-ip 0.0.0.0 --tproxy-mark "$TPROXY_MARK/$TPROXY_MARK" 2>/dev/null; then
+        ip route flush table "$ROUTE_TABLE" 2>/dev/null
+        while ip rule del pref "$RULE_PREF_HOTSPOT" 2>/dev/null; do :; done
+        if ip route replace local 0.0.0.0/0 dev lo table "$ROUTE_TABLE" 2>/dev/null && \
+           ip rule add pref "$RULE_PREF_HOTSPOT" iif "$HOTSPOT_IF" fwmark "$TPROXY_MARK/$TPROXY_MARK" lookup "$ROUTE_TABLE" 2>/dev/null; then
+          iptables -w -t mangle -I PREROUTING 1 -i "$HOTSPOT_IF" -p udp -j SHARENET_TPROXY
+          MODE_TAG="redir+tproxy"
+        fi
+      fi
     fi
 
-    while ip rule del pref "$RULE_PREF_HOTSPOT" 2>/dev/null; do :; done
-    ip rule add pref "$RULE_PREF_HOTSPOT" iif "$HOTSPOT_IF" lookup "$ROUTE_TABLE" || { echo "ERR:RULE_FAIL"; stop_all; cleanup_sensitive; exit 8; }
-
-    iptables -w -I FORWARD 1 -i "$HOTSPOT_IF" -o "$TUN_IF" -j ACCEPT
-    ipt_fwd_est_add "$TUN_IF" "$HOTSPOT_IF"
-    iptables -w -t nat -I POSTROUTING 1 -o "$TUN_IF" -j MASQUERADE
-    iptables -w -I INPUT 1 ! -i "$HOTSPOT_IF" -p udp --dport "$DNS_PORT" -j DROP 2>/dev/null || true
-    iptables -w -I INPUT 1 ! -i "$HOTSPOT_IF" -p tcp --dport "$DNS_PORT" -j DROP 2>/dev/null || true
-    iptables -w -I INPUT 1 -i "$HOTSPOT_IF" -p udp --dport "$DNS_PORT" -j ACCEPT
-    iptables -w -I INPUT 1 -i "$HOTSPOT_IF" -p tcp --dport "$DNS_PORT" -j ACCEPT
-    iptables -w -t nat -I PREROUTING 1 -i "$HOTSPOT_IF" -p udp --dport 53 -j REDIRECT --to-ports "$DNS_PORT"
-    iptables -w -t nat -I PREROUTING 1 -i "$HOTSPOT_IF" -p tcp --dport 53 -j REDIRECT --to-ports "$DNS_PORT"
-    echo "OK:$TUN_IF:$HOTSPOT_IF"
+    echo "OK:$MODE_TAG:$HOTSPOT_IF"
     ;;
   stop)
     stop_all
@@ -889,7 +1038,7 @@ case "$1" in
     if [ -f "$PIDFILE" ]; then
       _PID=$(cat "$PIDFILE" 2>/dev/null)
       if [ -n "$_PID" ] && kill -0 "$_PID" 2>/dev/null; then
-        if ip route show table "$ROUTE_TABLE" 2>/dev/null | grep -q "^default dev $TUN_IF"; then
+        if is_port_listening "$REDIR_PORT_HEX" && iptables -w -t nat -S PREROUTING 2>/dev/null | grep -Fq "SHARENET_NAT"; then
           echo "HEALTHY"
           exit 0
         fi
@@ -1067,21 +1216,61 @@ func (h *Helper) SetupReversePort(serial string, port int) CommandResult {
 	return h.RunAdb(5*time.Second, serialArgs(serial, "reverse", spec, spec)...)
 }
 
-// EnsureReversePort checks `adb reverse --list` and restores `tcp:<port>` if USB reset dropped it.
-func (h *Helper) EnsureReversePort(serial string, port int) (bool, error) {
+// ProbeReversePort tests actual TCP connectivity from the Android device to 127.0.0.1:<port>.
+// Returns (reachable, supported). If `nc` is unavailable on the device, returns (false, false).
+func (h *Helper) ProbeReversePort(serial string, port int) (bool, bool) {
 	if serial == "" || port <= 0 {
-		return false, nil
+		return false, false
+	}
+	script := fmt.Sprintf(
+		"if command -v nc >/dev/null 2>&1; then nc -w 2 127.0.0.1 %d </dev/null >/dev/null 2>&1 && echo OK || echo FAIL; else echo NO_NC; fi",
+		port,
+	)
+	res := h.RunAdb(4*time.Second, serialArgs(serial, "shell", "sh", "-c", script)...)
+	if res.ExitCode != 0 {
+		return false, false
+	}
+	out := strings.TrimSpace(res.Output)
+	switch {
+	case strings.Contains(out, "OK"):
+		return true, true
+	case strings.Contains(out, "FAIL"):
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+// EnsureReversePortVerified checks `adb reverse --list` and optionally probes actual TCP
+// connectivity from the phone to 127.0.0.1:<port>, recreating the reverse tunnel if missing or dead.
+func (h *Helper) EnsureReversePortVerified(serial string, port int, verifyConnect bool) (bool, string, error) {
+	if serial == "" || port <= 0 {
+		return false, "", nil
 	}
 	listRes := h.RunAdb(3*time.Second, serialArgs(serial, "reverse", "--list")...)
 	if listRes.ExitCode != 0 {
-		return false, fmt.Errorf("adb reverse --list exit %d: %s", listRes.ExitCode, strings.TrimSpace(listRes.Output))
+		return false, "", fmt.Errorf("adb reverse --list exit %d: %s", listRes.ExitCode, strings.TrimSpace(listRes.Output))
 	}
-	if HasReversePort(listRes.Output, port) {
-		return false, nil
+	needReset := !HasReversePort(listRes.Output, port)
+	reason := "missing"
+	if !needReset && verifyConnect {
+		if ok, supported := h.ProbeReversePort(serial, port); supported && !ok {
+			needReset = true
+			reason = "unreachable"
+		}
+	}
+	if !needReset {
+		return false, "", nil
 	}
 	revRes := h.SetupReversePort(serial, port)
 	if revRes.ExitCode != 0 {
-		return false, fmt.Errorf("adb reverse tcp:%d exit %d: %s", port, revRes.ExitCode, strings.TrimSpace(revRes.Output))
+		return false, "", fmt.Errorf("adb reverse tcp:%d exit %d: %s", port, revRes.ExitCode, strings.TrimSpace(revRes.Output))
 	}
-	return true, nil
+	return true, reason, nil
+}
+
+// EnsureReversePort checks `adb reverse --list` and restores `tcp:<port>` if USB reset dropped it.
+func (h *Helper) EnsureReversePort(serial string, port int) (bool, error) {
+	restored, _, err := h.EnsureReversePortVerified(serial, port, false)
+	return restored, err
 }

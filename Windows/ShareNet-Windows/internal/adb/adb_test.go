@@ -66,7 +66,7 @@ func TestMiniShareConfigsAndUUID(t *testing.T) {
 		t.Fatalf("expected unique 36-char UUIDv4s, got %q and %q", u1, u2)
 	}
 	srv := BuildMiniShareServerJSON(u1, 10808)
-	for _, want := range []string{u1, `"127.0.0.1"`, `"vless"`, `"warn"`, `"127.0.0.0/8"`, `"198.18.0.0/15"`, `"ip_is_private": true`, `"reject"`, `"resolve"`} {
+	for _, want := range []string{u1, `"127.0.0.1"`, `"vless"`, `"warn"`, `"127.0.0.0/8"`, `"198.18.0.0/15"`, `"ip_is_private": true`, `"reject"`, `"resolve"`, `"hijack-dns"`, `"port": 53`, `"protocol": "dns"`, `"final": "dns-guard"`} {
 		if !strings.Contains(srv, want) {
 			t.Fatalf("unexpected server config (missing %s): %s", want, srv)
 		}
@@ -80,10 +80,13 @@ func TestMiniShareConfigsAndUUID(t *testing.T) {
 		t.Fatalf("loopback DNS must never be exempted from server SSRF reject rules: %s", srvLoopbackDns)
 	}
 	cli := BuildMiniShareClientJSON(u1, 10808, 1053, "192.168.1.1:1.1.1.1")
-	for _, want := range []string{u1, `"1.1.1.1"`, `"https"`, `"/dns-query"`, `"xudp"`, `"mtu": 1500`, `"gvisor"`, `"warn"`, `"198.18.0.0/15"`, `"reject"`} {
+	for _, want := range []string{u1, `"1.1.1.1"`, `"https"`, `"/dns-query"`, `"xudp"`, `"redirect"`, `"tproxy"`, `"listen_port": 12345`, `"listen_port": 12346`, `"warn"`, `"198.18.0.0/15"`, `"reject"`} {
 		if !strings.Contains(cli, want) {
 			t.Fatalf("unexpected client config (missing %s): %s", want, cli)
 		}
+	}
+	if strings.Contains(cli, `"gvisor"`) {
+		t.Fatalf("default high-speed client config must not use gvisor TUN: %s", cli)
 	}
 	if strings.Contains(cli, `"outbound": "direct"`) {
 		t.Fatalf("client config must not route private IPs to direct: %s", cli)
@@ -91,6 +94,18 @@ func TestMiniShareConfigsAndUUID(t *testing.T) {
 	cliLanDns := BuildMiniShareClientJSON(u1, 10808, 1053, "10.1.0.5")
 	if !strings.Contains(cliLanDns, `"type": "udp"`) || !strings.Contains(cliLanDns, `"10.1.0.5"`) {
 		t.Fatalf("expected UDP DNS for explicit private DNS server, got: %s", cliLanDns)
+	}
+	cliUnknownPubDns := BuildMiniShareClientJSON(u1, 10808, 1053, "4.2.2.1")
+	if !strings.Contains(cliUnknownPubDns, `"type": "https"`) || !strings.Contains(cliUnknownPubDns, `"1.1.1.1"`) || !strings.Contains(cliUnknownPubDns, `"/dns-query"`) {
+		t.Fatalf("expected DoH 1.1.1.1 fallback for unknown public DNS server, got: %s", cliUnknownPubDns)
+	}
+	cliGvisorStack := BuildMiniShareClientJSONWithStack(u1, 10808, 1053, "1.1.1.1", "gvisor")
+	if !strings.Contains(cliGvisorStack, `"stack": "gvisor"`) {
+		t.Fatalf("expected gvisor stack when explicitly requested, got: %s", cliGvisorStack)
+	}
+	cliBadStack := BuildMiniShareClientJSONWithStack(u1, 10808, 1053, "1.1.1.1", "invalid")
+	if !strings.Contains(cliBadStack, `"type": "redirect"`) || !strings.Contains(cliBadStack, `"type": "tproxy"`) {
+		t.Fatalf("expected fallback to native redirect+tproxy for invalid stack, got: %s", cliBadStack)
 	}
 	srvWithProxy := buildMiniShareServerJSONWithProxy(u1, 10808, "1.1.1.1", "10.5.0.10", 3128)
 	if !strings.Contains(srvWithProxy, `"upstream-proxy"`) || !strings.Contains(srvWithProxy, `"10.5.0.10"`) || !strings.Contains(srvWithProxy, `"final": "upstream-proxy"`) {

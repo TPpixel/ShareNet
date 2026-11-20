@@ -10,11 +10,17 @@ if (-not (Test-Path $go)) {
 if (-not (Test-Path $go)) { throw "Go compiler not found at $go" }
 
 # Locate source runtime assets
+$cachedRuntimeTools = Get-ChildItem -Path "$env:LOCALAPPDATA\ShareNet\runtime\*\tools" -Directory -ErrorAction SilentlyContinue |
+    Where-Object { Test-Path (Join-Path (Split-Path $_.FullName -Parent) ".ready") } |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1 -ExpandProperty FullName
+
 $ptCandidates = @(
     (Join-Path $workspace "adb-no-admin\platform-tools"),
     (Join-Path $workspace "ShareNetUSB\tools\platform-tools"),
     "$env:LOCALAPPDATA\Android\Sdk\platform-tools"
 )
+if ($cachedRuntimeTools) { $ptCandidates += (Join-Path $cachedRuntimeTools "platform-tools") }
 $ptSource = $ptCandidates | Where-Object { Test-Path (Join-Path $_ "adb.exe") } | Select-Object -First 1
 if (-not $ptSource) { throw "platform-tools (adb.exe) not found" }
 
@@ -22,6 +28,7 @@ $gnCandidates = @(
     (Join-Path $workspace "gnirehtet\gnirehtet-rust-win64"),
     (Join-Path $workspace "ShareNetUSB\tools\gnirehtet")
 )
+if ($cachedRuntimeTools) { $gnCandidates += (Join-Path $cachedRuntimeTools "gnirehtet") }
 $gnSource = $gnCandidates | Where-Object { (Test-Path (Join-Path $_ "gnirehtet.exe")) -and (Test-Path (Join-Path $_ "gnirehtet.apk")) } | Select-Object -First 1
 if (-not $gnSource) { throw "gnirehtet.exe / gnirehtet.apk not found" }
 
@@ -29,6 +36,7 @@ $hpCandidates = @(
     (Join-Path $workspace "hotspot-proxy-app\build\hotspot-proxy.apk"),
     (Join-Path $workspace "ShareNetUSB\tools\hotspot-proxy\hotspot-proxy.apk")
 )
+if ($cachedRuntimeTools) { $hpCandidates += (Join-Path $cachedRuntimeTools "hotspot-proxy\hotspot-proxy.apk") }
 $hpSource = $hpCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $hpSource) { throw "hotspot-proxy.apk not found" }
 
@@ -36,6 +44,7 @@ $sbCandidates = @(
     (Join-Path $workspace "HotspotVPN-Win\sing-box.exe"),
     (Join-Path $workspace "ShareNetUSB\tools\sing-box\sing-box.exe")
 )
+if ($cachedRuntimeTools) { $sbCandidates += (Join-Path $cachedRuntimeTools "sing-box\sing-box.exe") }
 $sbSource = $sbCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $sbSource) { throw "sing-box.exe not found" }
 
@@ -43,6 +52,7 @@ $sbAndroidCandidates = @(
     (Join-Path $workspace "MiniShare-android\sing-box"),
     (Join-Path $workspace "ShareNetUSB\tools\sing-box\sing-box-android")
 )
+if ($cachedRuntimeTools) { $sbAndroidCandidates += (Join-Path $cachedRuntimeTools "sing-box\sing-box-android") }
 $sbAndroidSource = $sbAndroidCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $sbAndroidSource) { throw "Android sing-box binary not found" }
 
@@ -106,7 +116,7 @@ finally {
 
 $rootPortable = Join-Path $workspace "ShareNetUSB"
 New-Item -ItemType Directory -Force -Path $rootPortable | Out-Null
-Get-Process -Name ShareNet, gnirehtet, adb -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process -Name ShareNet -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 300
 foreach ($stale in @("ShareNetUSB.exe", "ShareNetUSB_Start.bat", "tools")) {
     $p = Join-Path $rootPortable $stale

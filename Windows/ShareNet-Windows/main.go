@@ -66,15 +66,20 @@ type AppState struct {
 }
 
 type ShareApp struct {
-	mu                sync.Mutex
-	adb               *adb.Helper
-	socks             *socks5.Server
-	vpn               *hotspotvpn.Manager
-	gnirehtetCmd      *exec.Cmd
-	miniShareCmd      *exec.Cmd
-	miniShareCfg      string
-	miniShareUuid     string
-	isSharing         bool
+	mu                  sync.Mutex
+	refreshMu           sync.Mutex
+	adb                 *adb.Helper
+	socks               *socks5.Server
+	vpn                 *hotspotvpn.Manager
+	gnirehtetCmd        *exec.Cmd
+	miniShareCmd        *exec.Cmd
+	miniShareCfg        string
+	miniShareUuid       string
+	emptyDevicePolls    int
+	miniUnhealthyCount  int
+	miniRestartCooldown time.Time
+	lastReverseProbe    time.Time
+	isSharing           bool
 	isBusy            bool
 	darkTheme         bool
 	activeSerial      string
@@ -285,7 +290,18 @@ func (a *ShareApp) snapshot() AppState {
 }
 
 func (a *ShareApp) refreshDevices() {
-	devices := a.adb.GetDevices()
+	if !a.refreshMu.TryLock() {
+		return
+	}
+	defer a.refreshMu.Unlock()
+
+	devices, devErr := a.adb.GetDevicesWithErr()
+	if devErr != nil {
+		// Transient ADB error or timeout — do not tear down an active sharing session.
+		a.logf("Временная ошибка опроса ADB (сессия сохранена): %v", devErr)
+		return
+	}
+
 	var ready *adb.DeviceInfo
 	for i := range devices {
 		if devices[i].State == "device" {
@@ -294,22 +310,32 @@ func (a *ShareApp) refreshDevices() {
 		}
 	}
 
-	var hotspot adb.HotspotStatus
-	if ready != nil {
-		hotspot = a.adb.DetectHotspotStatus(ready.Serial)
-	}
-
 	a.mu.Lock()
 	checkedSerial := a.rootCheckedSerial
-	miniActive := a.isSharing && !a.isBusy && a.miniShareCmd != nil && a.rootNat.Applied && !a.rootNatBusy
-	reverseActive := a.isSharing && !a.isBusy && (a.miniShareCmd != nil || a.socks != nil)
+	busyNow := a.isBusy || a.rootNatBusy
+	miniActive := a.isSharing && !busyNow && a.miniShareCmd != nil && a.rootNat.Applied
+	reverseActive := a.isSharing && !busyNow && (a.miniShareCmd != nil || a.socks != nil)
+	verifyReverseNow := reverseActive && time.Since(a.lastReverseProbe) >= 15*time.Second
+	if verifyReverseNow {
+		a.lastReverseProbe = time.Now()
+	}
+	cachedHotspot := a.hotspot
 	a.mu.Unlock()
 
-	if ready != nil && checkedSerial != ready.Serial {
+	hotspot := cachedHotspot
+	if ready != nil && !busyNow {
+		hotspot = a.adb.DetectHotspotStatus(ready.Serial)
+	} else if ready == nil {
+		hotspot = adb.HotspotStatus{}
+	}
+
+	if ready != nil && !busyNow && checkedSerial != ready.Serial {
 		status := a.adb.CheckRootStatus(ready.Serial)
 		rooted := status == "rooted"
 		a.mu.Lock()
-		a.rootCheckedSerial = ready.Serial
+		if status != "unknown" {
+			a.rootCheckedSerial = ready.Serial
+		}
 		a.rootStatus = status
 		a.isRooted = rooted
 		a.mu.Unlock()
@@ -321,8 +347,12 @@ func (a *ShareApp) refreshDevices() {
 	}
 
 	if ready != nil && reverseActive {
-		if restored, err := a.adb.EnsureReversePort(ready.Serial, UsbSocksPort); restored {
-			a.logf("Восстановлен проброс adb reverse :%d после сбоя USB.", UsbSocksPort)
+		if restored, reason, err := a.adb.EnsureReversePortVerified(ready.Serial, UsbSocksPort, verifyReverseNow); restored {
+			if reason == "unreachable" {
+				a.logf("Обратный туннель adb reverse :%d не отвечал — пересоздан автоматически.", UsbSocksPort)
+			} else {
+				a.logf("Восстановлен проброс adb reverse :%d после сбоя USB.", UsbSocksPort)
+			}
 		} else if err != nil {
 			a.logf("Предупреждение adb reverse :%d: %v", UsbSocksPort, err)
 		}
@@ -337,13 +367,19 @@ func (a *ShareApp) refreshDevices() {
 	a.hotspot = hotspot
 
 	if len(devices) == 0 {
-		shouldStop := a.isSharing || a.gnirehtetCmd != nil || a.miniShareCmd != nil || a.socks != nil
+		a.emptyDevicePolls++
+		shouldStop := (a.isSharing || a.gnirehtetCmd != nil || a.miniShareCmd != nil || a.socks != nil) && a.emptyDevicePolls >= 2
+		if a.emptyDevicePolls < 2 && (a.isSharing || a.miniShareCmd != nil || a.gnirehtetCmd != nil) {
+			a.mu.Unlock()
+			return
+		}
 		a.activeSerial = ""
 		a.autoStartedSerial = ""
 		a.rootCheckedSerial = ""
 		a.rootStatus = ""
 		a.isRooted = false
 		a.rootNat = adb.RootHotspotState{}
+		a.miniUnhealthyCount = 0
 		a.deviceState = "none"
 		a.deviceName = "Телефон не обнаружен. Подключите USB и включите Отладку по USB."
 		a.mu.Unlock()
@@ -352,6 +388,7 @@ func (a *ShareApp) refreshDevices() {
 		}
 		return
 	}
+	a.emptyDevicePolls = 0
 
 	chosen := devices[0]
 	if ready != nil {
@@ -383,13 +420,27 @@ func (a *ShareApp) refreshDevices() {
 	disablePriv := a.disablePrivDns
 	startProxy := a.startProxy
 	miniMode := a.isSharing && !a.isBusy && a.miniShareCmd != nil && a.isRooted && a.rootHotspot
-	if miniMode && !miniHealthy {
-		a.rootNat = adb.RootHotspotState{}
+	restartingUnhealthy := false
+	if miniMode && a.rootNat.Applied && hotspot.IsActive {
+		if !miniHealthy {
+			a.miniUnhealthyCount++
+			if a.miniUnhealthyCount >= 2 {
+				a.rootNat = adb.RootHotspotState{}
+				a.miniUnhealthyCount = 0
+				restartingUnhealthy = true
+			}
+		} else {
+			a.miniUnhealthyCount = 0
+		}
+	} else {
+		a.miniUnhealthyCount = 0
 	}
-	shouldApplyMini := ready != nil && miniMode && hotspot.IsActive && !a.rootNat.Applied && !a.rootNatBusy
+	cooldownReady := time.Now().After(a.miniRestartCooldown)
+	shouldApplyMini := ready != nil && miniMode && hotspot.IsActive && !a.rootNat.Applied && !a.rootNatBusy && cooldownReady
 	var miniUuid string
 	if shouldApplyMini {
 		a.rootNatBusy = true
+		a.miniRestartCooldown = time.Now().Add(10 * time.Second)
 		miniUuid = a.miniShareUuid
 	}
 	shouldDropMini := ready != nil && miniMode && !hotspot.IsActive && a.rootNat.Applied && !a.rootNatBusy
@@ -404,8 +455,8 @@ func (a *ShareApp) refreshDevices() {
 		go a.startSharing(dns, disablePriv, startProxy)
 	}
 	if shouldApplyMini {
-		if !miniHealthy {
-			a.log("Туннель Root-раздачи (sing-box) перезапускается...")
+		if restartingUnhealthy {
+			a.log("Туннель Root-раздачи (sing-box) не отвечает 2 проверки подряд — перезапускаю...")
 		}
 		go a.applyMiniShareAsync(ready.Serial, hotspot.InterfaceName, dns, miniUuid)
 	}
@@ -447,14 +498,20 @@ func (a *ShareApp) startSharing(dns string, disablePrivDns, startProxy bool) {
 	a.mu.Lock()
 	a.activeSerial = serial
 	a.autoStartedSerial = serial
-	wasDenied := a.rootStatus == "denied"
+	needRootRecheck := !a.isRooted
 	a.mu.Unlock()
-	if wasDenied {
+	if needRootRecheck {
 		status := a.adb.CheckRootStatus(serial)
 		a.mu.Lock()
+		if status != "unknown" {
+			a.rootCheckedSerial = serial
+		}
 		a.rootStatus = status
 		a.isRooted = status == "rooted"
 		a.mu.Unlock()
+		if status == "rooted" {
+			a.log("Обнаружен Root-доступ на телефоне — применён прозрачный режим (sing-box).")
+		}
 	}
 
 	a.mu.Lock()
@@ -618,7 +675,13 @@ func (a *ShareApp) startMiniShareMode(serial, dns string, disablePrivDns bool) {
 		}
 	}
 
-	uuid := adb.GenerateUUIDv4()
+	a.mu.Lock()
+	uuid := a.miniShareUuid
+	if uuid == "" {
+		uuid = adb.GenerateUUIDv4()
+		a.miniShareUuid = uuid
+	}
+	a.mu.Unlock()
 	cfgFile, err := os.CreateTemp("", "sharenet_pc_server_*.json")
 	if err != nil {
 		a.mu.Lock()
@@ -699,7 +762,6 @@ func (a *ShareApp) startMiniShareMode(serial, dns string, disablePrivDns bool) {
 		if wasActive {
 			a.miniShareCmd = nil
 			a.miniShareCfg = ""
-			a.miniShareUuid = ""
 			a.rootNat = adb.RootHotspotState{}
 			a.isSharing = false
 		}
@@ -734,7 +796,11 @@ func (a *ShareApp) applyMiniShareAsync(serial, ifaceName, dns, uuid string) {
 	if !stillWanted {
 		return
 	}
-	_ = a.adb.RunAdb(4*time.Second, "-s", serial, "reverse", fmt.Sprintf("tcp:%d", UsbSocksPort), fmt.Sprintf("tcp:%d", UsbSocksPort))
+	if restored, reason, err := a.adb.EnsureReversePortVerified(serial, UsbSocksPort, true); err != nil {
+		a.logf("Предупреждение adb reverse :%d перед стартом MiniShare: %v", UsbSocksPort, err)
+	} else if restored && reason == "unreachable" {
+		a.logf("Пересоздан неработающий adb reverse :%d перед запуском MiniShare.", UsbSocksPort)
+	}
 	st, err := a.adb.StartMiniShare(serial, uuid, ifaceName, dns, UsbSocksPort)
 	if err != nil {
 		a.logf("Ошибка запуска Root-маршрутизации: %v", err)
@@ -742,8 +808,10 @@ func (a *ShareApp) applyMiniShareAsync(serial, ifaceName, dns, uuid string) {
 	}
 	a.mu.Lock()
 	a.rootNat = st
+	a.miniUnhealthyCount = 0
+	a.lastReverseProbe = time.Now()
 	a.mu.Unlock()
-	a.logf("Root-раздача активна (%s -> %s, DNS %s) — Wi-Fi работает напрямую без прокси.", st.ApIface, st.TunIface, st.DnsServer)
+	a.logf("Root-раздача активна (%s -> %s, DNS %s, DoH/hijack-dns). Если у клиента не работает DNS, отключите на клиенте Private DNS (DoT:853).", st.ApIface, st.TunIface, st.DnsServer)
 }
 
 func (a *ShareApp) stopMiniSharePhoneAsync(serial string) {
@@ -778,7 +846,6 @@ func (a *ShareApp) cleanupProcessesAndRestoreDns() {
 	a.miniShareCmd = nil
 	msCfg := a.miniShareCfg
 	a.miniShareCfg = ""
-	a.miniShareUuid = ""
 	serial := a.activeSerial
 	backup := a.dnsBackup
 	a.dnsBackup = adb.PrivateDnsBackup{}
@@ -1099,6 +1166,7 @@ func (a *ShareApp) startServer() (string, error) {
 			a.log("Выполняется полный сброс и откат (Раздача USB + Приём VPN/Прокси)...")
 			a.cleanupProcessesAndRestoreDns()
 			a.mu.Lock()
+			a.miniShareUuid = ""
 			serial := a.activeSerial
 			a.mu.Unlock()
 			a.adb.ResetGnirehtetState(serial)

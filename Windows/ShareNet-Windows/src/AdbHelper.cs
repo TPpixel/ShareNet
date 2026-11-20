@@ -262,6 +262,9 @@ namespace ShareNetUSB
             }
         }
 
+        private DateTime _dumpsysBackoffUntilUtc = DateTime.MinValue;
+        private DateTime _lastDumpsysCheckUtc = DateTime.MinValue;
+
         public HotspotStatus DetectHotspotStatus(string serial)
         {
             var status = new HotspotStatus();
@@ -271,19 +274,9 @@ namespace ShareNetUSB
             }
 
             string prefix = "-s " + serial + " ";
-            string tetheredIface = null;
 
-            CommandResult tetherRes = RunAdb(prefix + "shell dumpsys tethering", 6000);
-            if (tetherRes.ExitCode == 0 && !string.IsNullOrEmpty(tetherRes.Output))
-            {
-                Match m = Regex.Match(tetherRes.Output, @"^\s*([a-zA-Z0-9_.-]+)\s*-\s*TetheredState", RegexOptions.Multiline);
-                if (m.Success)
-                {
-                    tetheredIface = m.Groups[1].Value.Trim();
-                }
-            }
-
-            CommandResult ipRes = RunAdb(prefix + "shell ip -4 addr", 6000);
+            // Fast non-blocking path first: `ip -4 addr` does not hang Android's tethering service.
+            CommandResult ipRes = RunAdb(prefix + "shell ip -4 addr", 4000);
             if (ipRes.ExitCode != 0 || string.IsNullOrEmpty(ipRes.Output))
             {
                 return status;
@@ -314,15 +307,7 @@ namespace ShareNetUSB
                 }
             }
 
-            if (!string.IsNullOrEmpty(tetheredIface) && ifaceIps.ContainsKey(tetheredIface))
-            {
-                status.IsActive = true;
-                status.InterfaceName = tetheredIface;
-                status.IpAddress = ifaceIps[tetheredIface];
-                return status;
-            }
-
-            // Fallback: look for common hotspot interfaces if dumpsys tethering format differs.
+            // Prefer common hotspot interfaces immediately without invoking dumpsys tethering.
             string[] preferredPrefixes = new[] { "ap", "swlan", "softap", "wlan2", "wlan1" };
             foreach (string pref in preferredPrefixes)
             {
@@ -333,6 +318,36 @@ namespace ShareNetUSB
                         status.IsActive = true;
                         status.InterfaceName = kv.Key;
                         status.IpAddress = kv.Value;
+                        return status;
+                    }
+                }
+            }
+
+            // Fallback to dumpsys tethering only when no known prefix matched, with rate-limiting and timeout backoff.
+            DateTime nowUtc = DateTime.UtcNow;
+            if (nowUtc < _dumpsysBackoffUntilUtc || (nowUtc - _lastDumpsysCheckUtc).TotalSeconds < 30)
+            {
+                return status;
+            }
+            _lastDumpsysCheckUtc = nowUtc;
+
+            CommandResult tetherRes = RunAdb(prefix + "shell dumpsys tethering", 3000);
+            if (tetherRes.ExitCode == -1)
+            {
+                _dumpsysBackoffUntilUtc = DateTime.UtcNow.AddSeconds(90);
+                return status;
+            }
+            if (tetherRes.ExitCode == 0 && !string.IsNullOrEmpty(tetherRes.Output))
+            {
+                Match m = Regex.Match(tetherRes.Output, @"^\s*([a-zA-Z0-9_.-]+)\s*-\s*TetheredState", RegexOptions.Multiline);
+                if (m.Success)
+                {
+                    string tetheredIface = m.Groups[1].Value.Trim();
+                    if (!string.IsNullOrEmpty(tetheredIface) && ifaceIps.ContainsKey(tetheredIface))
+                    {
+                        status.IsActive = true;
+                        status.InterfaceName = tetheredIface;
+                        status.IpAddress = ifaceIps[tetheredIface];
                         return status;
                     }
                 }
